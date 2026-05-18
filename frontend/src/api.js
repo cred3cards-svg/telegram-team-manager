@@ -42,10 +42,13 @@ export const api = {
 
   // Groups
   listGroups: (project_id) => req("GET", `/groups/list?project_id=${project_id}`),
+  listGroupsLive: (project_id) => req("GET", `/groups/live?project_id=${project_id}`),
   joinGroup: (account_id, group_link) =>
     req("POST", "/groups/join", { account_id, group_link }),
   leaveGroup: (account_id, group_id) =>
     req("POST", "/groups/leave", { account_id, group_id }),
+  leaveAllGroups: (account_id, project_id) =>
+    req("POST", "/groups/leave-all", { account_id, project_id }),
   getGroupMessages: (account_id, group_id, limit = 50) =>
     req("GET", `/groups/messages?account_id=${account_id}&group_id=${group_id}&limit=${limit}`),
   toggleMonitor: (account_id, chat_id, monitored) =>
