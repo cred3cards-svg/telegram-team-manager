@@ -195,7 +195,7 @@ async def _maybe_away_reply(client, account_id: int, project_id: int, chat_entit
         ai_client = anthropic.AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
         response = await ai_client.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=150,
+            max_tokens=300,
             system=system_prompt,
             messages=[{"role": "user", "content": message_text}],
         )
