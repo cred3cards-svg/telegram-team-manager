@@ -17,8 +17,8 @@ async function req(method, path, body) {
 export const api = {
   // Projects
   listProjects: () => req("GET", "/projects/list"),
-  createProject: (name, tone, context) =>
-    req("POST", `/projects/create?name=${encodeURIComponent(name)}&tone=${tone}&context=${encodeURIComponent(context)}`),
+  createProject: (name, tone, context, system_prompt = "") =>
+    req("POST", `/projects/create?name=${encodeURIComponent(name)}&tone=${tone}&context=${encodeURIComponent(context)}&system_prompt=${encodeURIComponent(system_prompt)}`),
   updateProject: (id, params) => {
     const qs = new URLSearchParams(params).toString();
     return req("PUT", `/projects/${id}?${qs}`);
@@ -41,7 +41,7 @@ export const api = {
     req("POST", "/messages/send", { account_id, chat_id, text }),
 
   // Groups
-  listGroups: (account_id) => req("GET", `/groups/list?account_id=${account_id}`),
+  listGroups: (project_id) => req("GET", `/groups/list?project_id=${project_id}`),
   joinGroup: (account_id, group_link) =>
     req("POST", "/groups/join", { account_id, group_link }),
   leaveGroup: (account_id, group_id) =>
@@ -71,6 +71,16 @@ export const api = {
   getPersona: (account_id) => req("GET", `/accounts/${account_id}/persona`),
   updatePersona: (account_id, personality, job_description) =>
     req("PUT", `/accounts/${account_id}/persona`, { personality, job_description }),
+  reassignAccountProject: (account_id, project_id) =>
+    req("PUT", `/accounts/${account_id}/project?project_id=${project_id}`),
+
+  // Group Discovery
+  getSuggestedGroups: (category = "all", project_id = 0) =>
+    req("GET", `/discovery/suggested?category=${category}&limit=100&project_id=${project_id}`),
+  joinSuggestedGroup: (account_id, group_id) =>
+    req("POST", "/discovery/join", { account_id, group_id }),
+  runDiscoveryNow: (account_id) =>
+    req("POST", `/discovery/run-now?account_id=${account_id}`),
 };
 
 export function createWebSocket(project_id, onMessage) {

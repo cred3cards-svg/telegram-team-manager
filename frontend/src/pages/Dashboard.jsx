@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { api } from "../api";
+import DiscoveryPanel from "../components/DiscoveryPanel";
 
 export default function Dashboard({ project, onProjectChange }) {
   const [projects, setProjects] = useState([]);
@@ -7,7 +8,7 @@ export default function Dashboard({ project, onProjectChange }) {
   const [chats, setChats] = useState([]);
   const [awayLog, setAwayLog] = useState([]);
   const [isCreating, setIsCreating] = useState(false);
-  const [newProject, setNewProject] = useState({ name: "", tone: "casual", context: "" });
+  const [newProject, setNewProject] = useState({ name: "", tone: "casual", context: "", system_prompt: "" });
   const [editProject, setEditProject] = useState(null);
 
   useEffect(() => {
@@ -29,11 +30,11 @@ export default function Dashboard({ project, onProjectChange }) {
 
   async function handleCreateProject() {
     if (!newProject.name.trim()) return;
-    const created = await api.createProject(newProject.name, newProject.tone, newProject.context);
+    const created = await api.createProject(newProject.name, newProject.tone, newProject.context, newProject.system_prompt);
     setProjects((prev) => [...prev, created]);
     onProjectChange(created);
     setIsCreating(false);
-    setNewProject({ name: "", tone: "casual", context: "" });
+    setNewProject({ name: "", tone: "casual", context: "", system_prompt: "" });
   }
 
   async function handleUpdateProject() {
@@ -42,6 +43,7 @@ export default function Dashboard({ project, onProjectChange }) {
       name: editProject.name,
       tone: editProject.tone,
       context: editProject.context,
+      system_prompt: editProject.system_prompt || "",
     });
     setProjects((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
     if (project?.id === updated.id) onProjectChange(updated);
@@ -125,6 +127,11 @@ export default function Dashboard({ project, onProjectChange }) {
         />
       )}
 
+      {/* Group Discovery — always show when project is active */}
+      {project && (
+        <DiscoveryPanel accounts={accounts} project={project} />
+      )}
+
       {/* Edit Project */}
       {project && !isCreating && (
         <div className="bg-slate-800 rounded-2xl border border-slate-700 p-5">
@@ -151,17 +158,30 @@ export default function Dashboard({ project, onProjectChange }) {
           ) : (
             <div className="flex flex-col gap-2 text-sm">
               <div className="flex gap-2">
-                <span className="text-slate-400 w-24">Name</span>
+                <span className="text-slate-400 w-24 flex-shrink-0">Name</span>
                 <span className="text-slate-100">{project.name}</span>
               </div>
               <div className="flex gap-2">
-                <span className="text-slate-400 w-24">Tone</span>
+                <span className="text-slate-400 w-24 flex-shrink-0">Tone</span>
                 <span className="capitalize text-slate-100">{project.tone}</span>
               </div>
-              <div className="flex gap-2">
-                <span className="text-slate-400 w-24">Context</span>
-                <span className="text-slate-100">{project.context || "—"}</span>
-              </div>
+              {project.system_prompt ? (
+                <div className="flex gap-2">
+                  <span className="text-slate-400 w-24 flex-shrink-0">AI Prompt</span>
+                  <span className="text-indigo-300 text-xs font-mono line-clamp-2">{project.system_prompt}</span>
+                </div>
+              ) : (
+                <div className="flex gap-2">
+                  <span className="text-slate-400 w-24 flex-shrink-0">AI Prompt</span>
+                  <span className="text-slate-600 text-xs italic">Default OnlyWin persona</span>
+                </div>
+              )}
+              {project.context && (
+                <div className="flex gap-2">
+                  <span className="text-slate-400 w-24 flex-shrink-0">Context</span>
+                  <span className="text-slate-100">{project.context}</span>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -259,6 +279,7 @@ function AwayLogPanel({ log, onMarkReviewed, onMarkAllReviewed }) {
 }
 
 function ProjectForm({ title, data, onChange, onSave, onCancel }) {
+  const INPUT = "bg-slate-900 border border-slate-600 rounded-xl px-4 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-indigo-500 w-full";
   return (
     <div className="flex flex-col gap-3">
       {title && <h3 className="text-sm font-medium text-slate-200">{title}</h3>}
@@ -266,12 +287,31 @@ function ProjectForm({ title, data, onChange, onSave, onCancel }) {
         value={data.name}
         onChange={(e) => onChange({ ...data, name: e.target.value })}
         placeholder="Project name"
-        className="bg-slate-900 border border-slate-600 rounded-xl px-4 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-indigo-500"
+        className={INPUT}
       />
+
+      {/* AI Behaviour Prompt — the most important field */}
+      <div className="flex flex-col gap-1">
+        <label className="text-xs font-medium text-indigo-300">
+          AI Behaviour Prompt
+          <span className="ml-1 text-slate-500 font-normal">(defines what the bot does in this project)</span>
+        </label>
+        <textarea
+          value={data.system_prompt || ""}
+          onChange={(e) => onChange({ ...data, system_prompt: e.target.value })}
+          placeholder={`Describe the bot's persona and goal.\n\nExample: You are a friendly sales rep for AcmeCo. Your job is to answer questions about our SaaS product and get people to sign up for a free trial at @AcmeBot. Keep replies short, friendly, in Hinglish.`}
+          rows={5}
+          className={INPUT + " resize-none font-mono text-xs"}
+        />
+        <p className="text-[10px] text-slate-600">
+          Leave blank to use the default OnlyWin cricket promotion persona.
+        </p>
+      </div>
+
       <select
         value={data.tone}
         onChange={(e) => onChange({ ...data, tone: e.target.value })}
-        className="bg-slate-900 border border-slate-600 rounded-xl px-4 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-indigo-500"
+        className={INPUT}
       >
         <option value="casual">Casual</option>
         <option value="formal">Formal</option>
@@ -281,21 +321,15 @@ function ProjectForm({ title, data, onChange, onSave, onCancel }) {
       <textarea
         value={data.context}
         onChange={(e) => onChange({ ...data, context: e.target.value })}
-        placeholder="Project context (what does this project do?)"
-        rows={3}
-        className="bg-slate-900 border border-slate-600 rounded-xl px-4 py-2.5 text-sm text-slate-100 resize-none focus:outline-none focus:border-indigo-500"
+        placeholder="Short context note (optional)"
+        rows={2}
+        className={INPUT + " resize-none"}
       />
       <div className="flex gap-2">
-        <button
-          onClick={onCancel}
-          className="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-xl py-2.5 text-sm"
-        >
+        <button onClick={onCancel} className="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-xl py-2.5 text-sm">
           Cancel
         </button>
-        <button
-          onClick={onSave}
-          className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl py-2.5 text-sm font-medium"
-        >
+        <button onClick={onSave} className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl py-2.5 text-sm font-medium">
           Save
         </button>
       </div>
