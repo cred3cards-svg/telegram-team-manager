@@ -49,6 +49,8 @@ export const api = {
     req("POST", "/groups/leave", { account_id, group_id }),
   leaveAllGroups: (account_id, project_id) =>
     req("POST", "/groups/leave-all", { account_id, project_id }),
+  nukeAccount: (account_id, project_id) =>
+    req("POST", "/groups/nuke", { account_id, project_id }),
   getGroupMessages: (account_id, group_id, limit = 50) =>
     req("GET", `/groups/messages?account_id=${account_id}&group_id=${group_id}&limit=${limit}`),
   toggleMonitor: (account_id, chat_id, monitored) =>

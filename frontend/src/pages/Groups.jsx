@@ -6,6 +6,7 @@ export default function Groups({ project }) {
   const [loading, setLoading] = useState(false);
   const [leavingGroup, setLeavingGroup] = useState({}); // "accId-groupId" -> bool
   const [leavingAll, setLeavingAll] = useState({});     // accId -> bool
+  const [nuking, setNuking] = useState({});             // accId -> bool
   const [groupLink, setGroupLink] = useState("");
   const [joinAccountId, setJoinAccountId] = useState(null);
   const [joining, setJoining] = useState(false);
@@ -59,6 +60,25 @@ export default function Groups({ project }) {
       alert(e.message);
     } finally {
       setLeavingAll((p) => ({ ...p, [accountId]: false }));
+    }
+  }
+
+  async function handleNuke(accountId, phone) {
+    const confirmed = window.confirm(
+      `☢️ NUKE "${phone}"?\n\nThis will:\n• Delete ALL messages sent by this account in every group\n• Leave every group\n\nThis CANNOT be undone.`
+    );
+    if (!confirmed) return;
+    setNuking((p) => ({ ...p, [accountId]: true }));
+    try {
+      const result = await api.nukeAccount(accountId, project.id);
+      alert(`Done. Left ${result.groups} groups, deleted ${result.messages_deleted} messages.${result.failed.length ? `\n${result.failed.length} errors.` : ""}`);
+      setAccountGroups((prev) =>
+        prev.map((a) => a.account_id === accountId ? { ...a, groups: [] } : a)
+      );
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setNuking((p) => ({ ...p, [accountId]: false }));
     }
   }
 
@@ -155,15 +175,25 @@ export default function Groups({ project }) {
               <span className="text-sm font-medium text-slate-200">{acc.phone}</span>
               <span className="text-xs text-slate-500">{acc.groups.length} groups</span>
             </div>
-            {acc.groups.length > 0 && (
+            <div className="flex items-center gap-2">
+              {acc.groups.length > 0 && (
+                <button
+                  onClick={() => handleLeaveAll(acc.account_id)}
+                  disabled={leavingAll[acc.account_id] || nuking[acc.account_id]}
+                  className="text-xs text-red-400 hover:text-red-300 disabled:opacity-40 px-3 py-1 rounded-lg hover:bg-red-400/10 transition-colors border border-red-400/20"
+                >
+                  {leavingAll[acc.account_id] ? "Leaving..." : "Leave All"}
+                </button>
+              )}
               <button
-                onClick={() => handleLeaveAll(acc.account_id)}
-                disabled={leavingAll[acc.account_id]}
-                className="text-xs text-red-400 hover:text-red-300 disabled:opacity-40 px-3 py-1 rounded-lg hover:bg-red-400/10 transition-colors border border-red-400/20"
+                onClick={() => handleNuke(acc.account_id, acc.phone)}
+                disabled={nuking[acc.account_id] || leavingAll[acc.account_id]}
+                title="Delete all messages + leave all groups"
+                className="text-xs text-orange-500 hover:text-orange-400 disabled:opacity-40 px-3 py-1 rounded-lg hover:bg-orange-500/10 transition-colors border border-orange-500/30 font-medium"
               >
-                {leavingAll[acc.account_id] ? "Leaving all..." : "Leave All"}
+                {nuking[acc.account_id] ? "Nuking..." : "☢ Nuke"}
               </button>
-            )}
+            </div>
           </div>
 
           {/* Error */}

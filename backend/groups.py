@@ -241,6 +241,82 @@ async def leave_all_groups(req: LeaveAllRequest):
     return {"left": len(left), "failed": failed}
 
 
+class NukeRequest(BaseModel):
+    account_id: int
+    project_id: int
+
+
+@router.post("/groups/nuke")
+async def nuke_account(req: NukeRequest):
+    """
+    For every group this account is in:
+      1. Delete ALL messages sent by this account in that group
+      2. Leave the group
+    Then wipe from DB.
+    """
+    client = await get_client_for_account(req.account_id)
+
+    # Collect all groups first
+    group_entities = []
+    async for dialog in client.iter_dialogs():
+        entity = dialog.entity
+        is_group = (
+            (hasattr(entity, "megagroup") and entity.megagroup) or
+            isinstance(entity, Chat)
+        )
+        if not is_group:
+            continue
+        group_entities.append(entity)
+
+    stats = {"groups": 0, "messages_deleted": 0, "failed": []}
+
+    for entity in group_entities:
+        gid = str(entity.id)
+        name = getattr(entity, "title", gid)
+        msgs_deleted = 0
+
+        # Step 1: Delete all outgoing messages in this group
+        try:
+            msg_ids = []
+            async for msg in client.iter_messages(entity, from_user="me", limit=None):
+                msg_ids.append(msg.id)
+                # Delete in batches of 100 (Telegram limit)
+                if len(msg_ids) >= 100:
+                    try:
+                        await client.delete_messages(entity, msg_ids)
+                        msgs_deleted += len(msg_ids)
+                    except Exception:
+                        pass
+                    msg_ids = []
+            if msg_ids:
+                try:
+                    await client.delete_messages(entity, msg_ids)
+                    msgs_deleted += len(msg_ids)
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"[nuke] msg delete failed in {name}: {e}")
+
+        # Step 2: Leave the group
+        try:
+            await client(LeaveChannelRequest(entity))
+            stats["groups"] += 1
+            stats["messages_deleted"] += msgs_deleted
+            print(f"[nuke] left {name}, deleted {msgs_deleted} messages")
+        except Exception as e:
+            stats["failed"].append({"group": name, "error": str(e)})
+
+    # Wipe from DB
+    with get_conn() as conn:
+        conn.execute("DELETE FROM chats WHERE account_id=? AND type='group'", (req.account_id,))
+        conn.execute(
+            "DELETE FROM project_groups WHERE project_id=? AND account_id=?",
+            (req.project_id, req.account_id),
+        )
+
+    return stats
+
+
 @router.get("/groups/messages")
 async def get_group_messages(account_id: int, group_id: str, limit: int = 50):
     client = await get_client_for_account(account_id)
