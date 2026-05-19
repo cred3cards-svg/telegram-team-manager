@@ -1,10 +1,12 @@
 """
 Group Discovery Engine
 Runs in background when accounts are idle.
-Searches Telegram for public Indian groups (1000+ members),
-stores suggestions, and exposes API for dashboard + one-click join.
+Layer 1: @TgFinderBot — sends keywords, parses group links from replies
+Layer 2: Telegram ContactsSearch — keyword scan via Telethon API
+Both results merge into suggested_groups table.
 """
 import asyncio
+import re
 from datetime import datetime
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -127,65 +129,124 @@ def _already_joined_ids(account_id: int) -> set:
         return set()
 
 
-async def _discover_for_client(client, phone: str, account_id: int = 0):
-    seen_ids: set[str] = set()
-    found = []
-    keywords = _dynamic_keywords(account_id)
+# ── Bot keywords (focused on India) ──────────────────────────────────────────
+
+BOT_KEYWORDS = [
+    "cricket india", "ipl 2025", "india cricket fans",
+    "indian trading", "nifty banknifty", "india stocks",
+    "bollywood india", "hindi movies",
+    "desi memes india", "india memes",
+    "india chat", "indian group", "desi group",
+]
+
+
+def _extract_usernames_from_text(text: str) -> list[str]:
+    """Pull t.me links and @handles out of a bot reply."""
+    usernames = []
+    # t.me/username or t.me/+hash (skip invite links with +)
+    for m in re.finditer(r't\.me/([A-Za-z][A-Za-z0-9_]{3,})', text):
+        usernames.append(m.group(1))
+    # @username
+    for m in re.finditer(r'@([A-Za-z][A-Za-z0-9_]{3,})', text):
+        usernames.append(m.group(1))
+    return list(dict.fromkeys(usernames))  # dedup, preserve order
+
+
+async def _bot_discover(client, phone: str, account_id: int, seen_ids: set) -> list[dict]:
+    """
+    Send keywords to @TgFinderBot one by one, collect all @usernames it replies with,
+    then resolve each into a real Telegram entity and return enriched group dicts.
+    """
+    BOT = "TgFinderBot"
+    enriched = []
     already_joined = _already_joined_ids(account_id)
+    found_usernames: set[str] = set()
+
+    # Use a rotating slice of keywords — each account covers a different chunk
+    # so multiple accounts don't duplicate work
+    with get_conn() as conn:
+        acc_index = conn.execute(
+            "SELECT COUNT(*) as n FROM accounts WHERE id <= ? AND status='active'",
+            (account_id,)
+        ).fetchone()["n"] - 1
+    chunk_size = max(3, len(BOT_KEYWORDS) // 3)
+    start = (acc_index * chunk_size) % len(BOT_KEYWORDS)
+    keywords = (BOT_KEYWORDS + BOT_KEYWORDS)[start: start + chunk_size]
+
+    print(f"[tgfinderbot] {phone}: querying bot with {len(keywords)} keywords")
 
     for keyword in keywords:
         try:
-            result = await client(SearchRequest(q=keyword, limit=50))
-            for chat in result.chats:
-                # Only supergroups (megagroup=True) — skip channels
-                if not isinstance(chat, Channel):
+            await client.send_message(BOT, keyword)
+            await asyncio.sleep(6)   # give bot time to respond
+
+            # Read last 4 messages from the bot conversation
+            msgs = await client.get_messages(BOT, limit=4)
+            for msg in msgs:
+                if not msg.text:
                     continue
-                if not getattr(chat, "megagroup", False):
-                    continue
-                if getattr(chat, "restricted", False) or getattr(chat, "private", False):
-                    continue
-                members = getattr(chat, "participants_count", 0) or 0
-                if members < MIN_MEMBERS:
-                    continue
-                gid = str(chat.id)
-                if gid in seen_ids or gid in already_joined:
-                    continue
-                seen_ids.add(gid)
-                found.append(chat)
-            await asyncio.sleep(2)   # be polite to Telegram rate limits
+                for uname in _extract_usernames_from_text(msg.text):
+                    found_usernames.add(uname.lower())
+
+            await asyncio.sleep(4)   # be polite between keywords
         except Exception as e:
-            print(f"[discovery] keyword '{keyword}' failed: {e}")
-            await asyncio.sleep(5)
+            print(f"[tgfinderbot] '{keyword}' failed: {e}")
+            await asyncio.sleep(10)
 
-    # Fetch online count for top 20 groups (GetFullChannelRequest is heavier)
-    enriched = []
-    for chat in found[:40]:
+    print(f"[tgfinderbot] {phone}: found {len(found_usernames)} unique usernames, resolving...")
+
+    for uname in found_usernames:
+        if len(enriched) >= 40:
+            break
         try:
-            full = await client(GetFullChannelRequest(chat))
-            online = getattr(full.full_chat, "online_count", 0) or 0
-        except Exception:
-            online = 0
+            entity = await client.get_entity(uname)
+            # Only groups — skip channels and bots
+            is_group = (
+                isinstance(entity, Channel) and getattr(entity, "megagroup", False)
+            ) or isinstance(entity, Chat)
+            if not is_group:
+                continue
+            gid = str(entity.id)
+            if gid in seen_ids or gid in already_joined:
+                continue
+            seen_ids.add(gid)
 
-        username = getattr(chat, "username", "") or ""
-        description = getattr(
-            getattr(chat, "about", None) or full.full_chat if "full" in dir() else chat,
-            "about", ""
-        ) or ""
-        enriched.append({
-            "group_id": str(chat.id),
-            "username": username,
-            "name": chat.title,
-            "description": description[:200],
-            "members": getattr(chat, "participants_count", 0) or 0,
-            "online_members": online,
-            "category": _categorise(chat.title, description),
-            "discovered_at": datetime.utcnow().isoformat(),
-        })
-        await asyncio.sleep(1)
+            members = getattr(entity, "participants_count", 0) or 0
+            if members < MIN_MEMBERS:
+                continue
 
-    # Upsert into DB
+            username = getattr(entity, "username", "") or uname
+            description = ""
+            try:
+                full = await client(GetFullChannelRequest(entity))
+                description = getattr(full.full_chat, "about", "") or ""
+                online = getattr(full.full_chat, "online_count", 0) or 0
+            except Exception:
+                online = 0
+
+            enriched.append({
+                "group_id": gid,
+                "username": username,
+                "name": getattr(entity, "title", uname),
+                "description": description[:200],
+                "members": members,
+                "online_members": online,
+                "category": _categorise(getattr(entity, "title", ""), description),
+                "discovered_at": datetime.utcnow().isoformat(),
+                "source": "tgfinderbot",
+            })
+            await asyncio.sleep(1.5)
+        except Exception as e:
+            print(f"[tgfinderbot] resolve {uname} failed: {e}")
+
+    print(f"[tgfinderbot] {phone}: {len(enriched)} valid groups resolved")
+    return enriched
+
+
+async def _upsert_groups(groups: list[dict]):
+    """Write a list of enriched group dicts into suggested_groups."""
     with get_conn() as conn:
-        for g in enriched:
+        for g in groups:
             try:
                 conn.execute(
                     """INSERT INTO suggested_groups
@@ -201,7 +262,74 @@ async def _discover_for_client(client, phone: str, account_id: int = 0):
             except Exception:
                 pass
 
-    print(f"[discovery] {phone}: found {len(enriched)} groups, saved to DB")
+
+async def _discover_for_client(client, phone: str, account_id: int = 0):
+    seen_ids: set[str] = set()
+    already_joined = _already_joined_ids(account_id)
+
+    # ── Layer 1: @TgFinderBot ─────────────────────────────────────────────────
+    try:
+        bot_results = await _bot_discover(client, phone, account_id, seen_ids)
+        await _upsert_groups(bot_results)
+        print(f"[discovery] {phone}: TgFinderBot → {len(bot_results)} groups saved")
+    except Exception as e:
+        print(f"[discovery] {phone}: TgFinderBot layer failed: {e}")
+
+    # ── Layer 2: Telegram ContactsSearch (existing keyword scan) ─────────────
+    found = []
+    keywords = _dynamic_keywords(account_id)
+
+    for keyword in keywords:
+        try:
+            result = await client(SearchRequest(q=keyword, limit=50))
+            for chat in result.chats:
+                if not isinstance(chat, Channel):
+                    continue
+                if not getattr(chat, "megagroup", False):
+                    continue
+                if getattr(chat, "restricted", False) or getattr(chat, "private", False):
+                    continue
+                members = getattr(chat, "participants_count", 0) or 0
+                if members < MIN_MEMBERS:
+                    continue
+                gid = str(chat.id)
+                if gid in seen_ids or gid in already_joined:
+                    continue
+                seen_ids.add(gid)
+                found.append(chat)
+            await asyncio.sleep(2)
+        except Exception as e:
+            print(f"[discovery] keyword '{keyword}' failed: {e}")
+            await asyncio.sleep(5)
+
+    enriched = []
+    for chat in found[:40]:
+        try:
+            full = await client(GetFullChannelRequest(chat))
+            online = getattr(full.full_chat, "online_count", 0) or 0
+        except Exception:
+            online = 0
+
+        username = getattr(chat, "username", "") or ""
+        description = ""
+        try:
+            description = full.full_chat.about or ""
+        except Exception:
+            pass
+        enriched.append({
+            "group_id": str(chat.id),
+            "username": username,
+            "name": chat.title,
+            "description": description[:200],
+            "members": getattr(chat, "participants_count", 0) or 0,
+            "online_members": online,
+            "category": _categorise(chat.title, description),
+            "discovered_at": datetime.utcnow().isoformat(),
+        })
+        await asyncio.sleep(1)
+
+    await _upsert_groups(enriched)
+    print(f"[discovery] {phone}: ContactsSearch → {len(enriched)} groups saved")
 
 
 async def run_discovery_loop():
