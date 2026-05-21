@@ -2,6 +2,7 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from telethon.tl.functions.channels import JoinChannelRequest, LeaveChannelRequest
+from telethon.tl.functions.contacts import SearchRequest
 from telethon.tl.functions.messages import ImportChatInviteRequest
 from telethon.tl.types import Channel, Chat
 from database import get_conn, rows_to_list, row_to_dict
@@ -315,6 +316,50 @@ async def nuke_account(req: NukeRequest):
         )
 
     return stats
+
+
+@router.get("/groups/search")
+async def search_groups(keyword: str, account_id: int, limit: int = 40):
+    """
+    Search Telegram for public groups matching a keyword.
+    Returns results sorted by member count — does NOT auto-join anything.
+    """
+    client = await get_client_for_account(account_id)
+
+    # Get IDs already joined by this account so we can flag them
+    with get_conn() as conn:
+        joined_rows = conn.execute(
+            "SELECT chat_id FROM chats WHERE account_id=? AND type='group'",
+            (account_id,)
+        ).fetchall()
+    already_joined = {r["chat_id"] for r in joined_rows}
+
+    try:
+        result = await client(SearchRequest(q=keyword, limit=limit))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    groups = []
+    for chat in result.chats:
+        if not isinstance(chat, Channel):
+            continue
+        if not getattr(chat, "megagroup", False):
+            continue
+        if getattr(chat, "restricted", False):
+            continue
+        gid = str(chat.id)
+        username = getattr(chat, "username", "") or ""
+        members = getattr(chat, "participants_count", 0) or 0
+        groups.append({
+            "group_id": gid,
+            "group_name": chat.title,
+            "username": username,
+            "members": members,
+            "is_joined": gid in already_joined,
+        })
+
+    groups.sort(key=lambda g: g["members"], reverse=True)
+    return groups
 
 
 @router.get("/groups/messages")

@@ -43,6 +43,8 @@ export const api = {
   // Groups
   listGroups: (project_id) => req("GET", `/groups/list?project_id=${project_id}`),
   listGroupsLive: (project_id) => req("GET", `/groups/live?project_id=${project_id}`),
+  searchGroups: (keyword, account_id) =>
+    req("GET", `/groups/search?keyword=${encodeURIComponent(keyword)}&account_id=${account_id}`),
   joinGroup: (account_id, group_link) =>
     req("POST", "/groups/join", { account_id, group_link }),
   leaveGroup: (account_id, group_id) =>
