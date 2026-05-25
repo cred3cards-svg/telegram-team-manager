@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import time
 from datetime import datetime, timedelta
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
@@ -14,6 +15,11 @@ router = APIRouter()
 
 # Connected WebSocket clients: project_id -> list of WebSocket
 _ws_clients: dict[int, list[WebSocket]] = {}
+
+# Per-group cooldown: chat_id -> timestamp of last time we processed it
+# Groups are silently skipped if a message arrives within GROUP_COOLDOWN seconds
+GROUP_COOLDOWN = 30  # seconds
+_group_last_processed: dict[str, float] = {}
 
 
 class SendMessageRequest(BaseModel):
@@ -132,6 +138,15 @@ async def _maybe_away_reply(client, account_id: int, project_id: int, chat_entit
     if not is_away_for_chat(project_id, account_id, chat_id):
         return
 
+    # Groups: enforce 30-second cooldown — ignore every message that arrives
+    # within the window so we never spam or trigger Telegram rate limits
+    if chat_type == "group":
+        now = time.time()
+        last = _group_last_processed.get(chat_id, 0)
+        if now - last < GROUP_COOLDOWN:
+            return  # silent drop — cooldown not expired yet
+        _group_last_processed[chat_id] = now
+
     with get_conn() as conn:
         away_row = conn.execute("SELECT enabled_at FROM away_sessions WHERE project_id=?", (project_id,)).fetchone()
         if not away_row:
@@ -153,19 +168,7 @@ async def _maybe_away_reply(client, account_id: int, project_id: int, chat_entit
             (chat_row["id"], enabled_at),
         ).fetchone()["n"]
 
-        # Groups: extra limit — max 2 replies per 30 minutes
-        if chat_type == "group":
-            window_start = (datetime.utcnow() - timedelta(minutes=30)).isoformat()
-            group_recent = conn.execute(
-                "SELECT COUNT(*) as n FROM messages WHERE chat_id=? AND is_outgoing=1 AND timestamp >= ?",
-                (chat_row["id"], window_start),
-            ).fetchone()["n"]
-        else:
-            group_recent = 0
-
     if reply_count >= 10:
-        return
-    if chat_type == "group" and group_recent >= 2:
         return
 
     # Resolve chat name early so it's available for the AI prompt
