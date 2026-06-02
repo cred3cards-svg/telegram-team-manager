@@ -127,13 +127,18 @@ async def register_event_handlers(account_id: int, project_id: int):
         })
 
         # Away mode: auto-reply to both DMs and groups
+        # Use input_chat (already-resolved InputPeer) to avoid PeerUser lookup errors
+        try:
+            input_chat = await event.get_input_chat()
+        except Exception:
+            input_chat = None
         asyncio.create_task(
-            _maybe_away_reply(client, account_id, current_project_id, chat_entity, chat_id, msg.text, msg_id, chat_type)
+            _maybe_away_reply(client, account_id, current_project_id, chat_entity, chat_id, msg.text, msg_id, chat_type, input_chat=input_chat)
         )
 
 
 
-async def _maybe_away_reply(client, account_id: int, project_id: int, chat_entity, chat_id: str, message_text: str, msg_id: int, chat_type: str = "dm"):
+async def _maybe_away_reply(client, account_id: int, project_id: int, chat_entity, chat_id: str, message_text: str, msg_id: int, chat_type: str = "dm", input_chat=None):
     from away import is_away_for_chat
     if not is_away_for_chat(project_id, account_id, chat_id):
         return
@@ -212,9 +217,11 @@ async def _maybe_away_reply(client, account_id: int, project_id: int, chat_entit
     if not draft_text:
         return
 
-    # Send the reply — detect and flag write-restricted groups
+    # Send the reply — use input_chat (pre-resolved InputPeer) to avoid
+    # "Could not find entity for PeerUser" errors on DMs with new users
+    send_target = input_chat if input_chat is not None else chat_entity
     try:
-        await client.send_message(chat_entity, draft_text)
+        await client.send_message(send_target, draft_text)
     except Exception as e:
         err = str(e).lower()
         if any(x in err for x in ["write", "forbidden", "banned", "restrict", "right", "permission", "not allowed"]):
@@ -332,8 +339,13 @@ async def send_message(req: SendMessageRequest):
     client = await get_client_for_account(req.account_id)
 
     try:
-        entity = await client.get_entity(int(req.chat_id))
-        await client.send_message(entity, req.text)
+        # get_input_entity avoids the "Could not find PeerUser" error —
+        # it resolves via the access hash already stored in the session
+        try:
+            target = await client.get_input_entity(int(req.chat_id))
+        except Exception:
+            target = await client.get_entity(int(req.chat_id))
+        await client.send_message(target, req.text)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
