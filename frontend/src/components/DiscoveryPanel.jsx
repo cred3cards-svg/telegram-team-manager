@@ -1,15 +1,17 @@
 import React, { useState, useEffect } from "react";
 import { api } from "../api";
 
-const CATEGORIES = ["all", "cricket", "bollywood", "adult", "finance", "memes", "general"];
+const CATEGORIES = ["all", "housie", "ludo", "kitty-club", "earning", "gaming", "cricket", "finance", "general"];
 
 const CAT_COLORS = {
-  cricket:  "bg-green-500/20 text-green-300",
-  bollywood:"bg-pink-500/20 text-pink-300",
-  adult:    "bg-red-500/20 text-red-300",
-  finance:  "bg-yellow-500/20 text-yellow-300",
-  memes:    "bg-purple-500/20 text-purple-300",
-  general:  "bg-slate-500/20 text-slate-300",
+  housie:      "bg-orange-500/20 text-orange-300",
+  ludo:        "bg-indigo-500/20 text-indigo-300",
+  "kitty-club":"bg-pink-500/20 text-pink-300",
+  earning:     "bg-green-500/20 text-green-300",
+  gaming:      "bg-violet-500/20 text-violet-300",
+  cricket:     "bg-teal-500/20 text-teal-300",
+  finance:     "bg-yellow-500/20 text-yellow-300",
+  general:     "bg-slate-500/20 text-slate-300",
 };
 
 export default function DiscoveryPanel({ accounts = [], project = null }) {
@@ -72,7 +74,7 @@ export default function DiscoveryPanel({ accounts = [], project = null }) {
         <div className="flex items-center gap-2">
           <span className="text-base">🔍</span>
           <h3 className="text-sm font-medium text-slate-200">Suggested Groups</h3>
-          <span className="text-xs text-slate-500">India • 1000+ members • Auto-discovered</span>
+          <span className="text-xs text-slate-500">Housie • Ludo • Gaming • India • Auto-discovered</span>
         </div>
         <div className="flex items-center gap-2">
           {accounts.length > 1 && (
@@ -120,7 +122,7 @@ export default function DiscoveryPanel({ accounts = [], project = null }) {
       ) : groups.length === 0 ? (
         <div className="text-center py-8">
           <p className="text-xs text-slate-500 mb-3">No groups discovered yet.</p>
-          <p className="text-xs text-slate-600">Click "Scan Now" to start — runs automatically every 6 hours.</p>
+          <p className="text-xs text-slate-600">Click "Scan Now" to start — runs automatically every 4 hours.</p>
         </div>
       ) : (
         <>
