@@ -48,12 +48,18 @@ def get_away_status(project_id: int) -> dict:
     }
 
 
-def is_away_for_chat(project_id: int, account_id: int, chat_id: str) -> bool:
+def is_away_for_chat(project_id: int, account_id: int, chat_id: str, chat_type: str = "dm") -> bool:
     status = get_away_status(project_id)
     if not status["active"]:
         return False
-    if status["target_mode"] == "all":
+    mode = status["target_mode"]
+    if mode == "all":
         return True
+    if mode == "dms_only":
+        return chat_type == "dm"
+    if mode == "groups_only":
+        return chat_type == "group"
+    # "selected" mode
     key = f"{account_id}:{chat_id}"
     return key in status["target_chat_ids"]
 

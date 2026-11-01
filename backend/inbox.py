@@ -208,7 +208,7 @@ async def register_event_handlers(account_id: int, project_id: int):
 
 async def _maybe_away_reply(client, account_id: int, project_id: int, chat_entity, chat_id: str, message_text: str, msg_id: int, chat_type: str = "dm", input_chat=None):
     from away import is_away_for_chat
-    if not is_away_for_chat(project_id, account_id, chat_id):
+    if not is_away_for_chat(project_id, account_id, chat_id, chat_type=chat_type):
         return
 
     # Groups: classify spammy first, then enforce appropriate cooldown

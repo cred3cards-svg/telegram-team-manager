@@ -95,6 +95,7 @@ export default function AwayModal({ project, chats, onStatusChange }) {
   }
 
   const dmChats = chats.filter(c => c.type === "dm");
+  const allChats = chats;
 
   return (
     <>
@@ -108,7 +109,7 @@ export default function AwayModal({ project, chats, onStatusChange }) {
           <span className="text-sm font-semibold text-amber-300">Away</span>
           <span className="text-sm font-mono text-amber-400">{fmt(status.seconds_remaining)}</span>
           <span className="text-xs text-amber-500 ml-1">
-            {status.target_mode === "all" ? "· All DMs" : `· ${status.target_chat_ids?.length} chat${status.target_chat_ids?.length !== 1 ? "s" : ""}`}
+            {{ all: "· All", dms_only: "· DMs", groups_only: "· Groups", selected: `· ${status.target_chat_ids?.length} chats` }[status.target_mode] || "· All"}
           </span>
         </button>
       ) : (
@@ -153,9 +154,7 @@ export default function AwayModal({ project, chats, onStatusChange }) {
                   </div>
                   <div className="text-sm text-slate-300">
                     <span className="text-slate-400">Auto-replying to: </span>
-                    {status.target_mode === "all"
-                      ? "All incoming DMs"
-                      : `${status.target_chat_ids?.length} selected chat${status.target_chat_ids?.length !== 1 ? "s" : ""}`}
+                    {{ all: "All groups + DMs", dms_only: "DMs only", groups_only: "Groups only", selected: `${status.target_chat_ids?.length} selected chats` }[status.target_mode] || "All"}
                   </div>
                   <button
                     onClick={handleDisable}
@@ -191,48 +190,52 @@ export default function AwayModal({ project, chats, onStatusChange }) {
                   {/* Target */}
                   <div>
                     <label className="text-xs text-slate-400 uppercase tracking-wide mb-3 block">Auto-reply for</label>
-                    <div className="flex gap-2 mb-4">
-                      <button
-                        onClick={() => setTargetMode("all")}
-                        className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-colors ${
-                          targetMode === "all"
-                            ? "bg-indigo-600 text-white"
-                            : "bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700"
-                        }`}
-                      >
-                        All DMs
-                      </button>
-                      <button
-                        onClick={() => setTargetMode("selected")}
-                        className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-colors ${
-                          targetMode === "selected"
-                            ? "bg-indigo-600 text-white"
-                            : "bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700"
-                        }`}
-                      >
-                        Selected Chats
-                      </button>
+                    <div className="grid grid-cols-2 gap-2 mb-2">
+                      {[
+                        { mode: "all", label: "All (Groups + DMs)" },
+                        { mode: "dms_only", label: "DMs Only" },
+                        { mode: "groups_only", label: "Groups Only" },
+                        { mode: "selected", label: "Selected Chats" },
+                      ].map(({ mode, label }) => (
+                        <button
+                          key={mode}
+                          onClick={() => setTargetMode(mode)}
+                          className={`py-2.5 rounded-xl text-sm font-medium transition-colors ${
+                            targetMode === mode
+                              ? "bg-indigo-600 text-white"
+                              : "bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700"
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
                     </div>
+                    {targetMode === "all" && (
+                      <p className="text-xs text-slate-500 mt-1">Spam/bot groups get rotating promos only — genuine groups get AI replies</p>
+                    )}
+                    {targetMode === "groups_only" && (
+                      <p className="text-xs text-slate-500 mt-1">Spam groups → promo every 20 min · Genuine groups → AI reply every 5 min</p>
+                    )}
 
                     {targetMode === "selected" && (
-                      <div className="flex flex-col gap-1.5 max-h-52 overflow-y-auto pr-1">
-                        {dmChats.length === 0 ? (
-                          <p className="text-xs text-slate-500 text-center py-4">No DM chats found in inbox</p>
+                      <div className="flex flex-col gap-1.5 max-h-52 overflow-y-auto pr-1 mt-3">
+                        {allChats.length === 0 ? (
+                          <p className="text-xs text-slate-500 text-center py-4">No chats found in inbox</p>
                         ) : (
                           <>
                             <div className="flex justify-between items-center mb-1">
                               <span className="text-xs text-slate-500">{selectedChats.length} selected</span>
                               <button
                                 onClick={() => {
-                                  const allKeys = dmChats.map(c => `${c.account_id}:${c.chat_id}`);
+                                  const allKeys = allChats.map(c => `${c.account_id}:${c.chat_id}`);
                                   setSelectedChats(selectedChats.length === allKeys.length ? [] : allKeys);
                                 }}
                                 className="text-xs text-indigo-400 hover:text-indigo-300"
                               >
-                                {selectedChats.length === dmChats.length ? "Deselect all" : "Select all"}
+                                {selectedChats.length === allChats.length ? "Deselect all" : "Select all"}
                               </button>
                             </div>
-                            {dmChats.map(chat => {
+                            {allChats.map(chat => {
                               const key = `${chat.account_id}:${chat.chat_id}`;
                               const checked = selectedChats.includes(key);
                               return (
@@ -252,7 +255,7 @@ export default function AwayModal({ project, chats, onStatusChange }) {
                                   </div>
                                   <div className="min-w-0">
                                     <p className="text-sm text-slate-100 truncate">{chat.chat_name || chat.chat_id}</p>
-                                    <p className="text-xs text-slate-500 truncate">{chat.phone}</p>
+                                    <p className="text-xs text-slate-500 truncate">{chat.type === "group" ? "👥 Group" : "💬 DM"} · {chat.phone}</p>
                                   </div>
                                 </button>
                               );
