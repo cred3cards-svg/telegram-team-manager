@@ -169,7 +169,8 @@ async def build_system_prompt(
     project_system_prompt: str = "",
 ) -> str:
     cricket_context = await build_cricket_context()
-    history_str = "\n".join(chat_history[-3:])
+    message_text = message_text[:200]
+    history_str = "\n".join(h[:100] for h in chat_history[-2:])
 
     # ── Custom project prompt overrides everything ────────────────────────────
     if project_system_prompt and project_system_prompt.strip():
@@ -277,9 +278,11 @@ def build_draft(
     **kwargs,
 ) -> str:
     """Sync helper used by inbox.py away replies (no live cricket context)."""
+    # Hard-truncate to keep input tokens low — long scam/spam messages kill the TPM budget
+    message_text = message_text[:200]
     history_str = "\n".join(
-        f"{m.get('sender', 'User')}: {m.get('text', '')}"
-        for m in chat_history[-2:]  # last 2 only — saves ~100 tokens per call
+        f"{m.get('sender', 'User')}: {m.get('text', '')[:80]}"
+        for m in chat_history[-2:]
     )
 
     # ── Custom project prompt overrides everything ────────────────────────────
@@ -364,8 +367,9 @@ async def generate_draft(req: DraftRequest):
     )
 
     try:
-        raw = await call_ai(system, req.message_text, max_tokens=100)
+        raw = await call_ai(system, req.message_text[:200], max_tokens=100)
         data = parse_ai_response(raw)
+        print(f"[draft] raw={raw[:120]!r} → draft={data.get('draft','')[:60]!r}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
