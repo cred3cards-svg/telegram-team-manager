@@ -256,16 +256,14 @@ async def _maybe_away_reply(client, account_id: int, project_id: int, chat_entit
             print(f"[away] Skipping write-restricted chat {chat_id}")
             return
 
-        # For DMs: stop after DM_MAX_REPLIES to avoid burning credits on nonsense
-        # For groups: cooldown above already limits frequency
-        reply_count = conn.execute(
-            "SELECT COUNT(*) as n FROM messages WHERE chat_id=? AND is_outgoing=1 AND timestamp >= ?",
-            (chat_row["id"], enabled_at),
-        ).fetchone()["n"]
-
-    cap = DM_MAX_REPLIES if chat_type == "dm" else 10
-    if reply_count >= cap:
-        return
+        # DMs only: stop after DM_MAX_REPLIES — groups are rate-limited by cooldown alone
+        if chat_type == "dm":
+            reply_count = conn.execute(
+                "SELECT COUNT(*) as n FROM messages WHERE chat_id=? AND is_outgoing=1 AND timestamp >= ?",
+                (chat_row["id"], enabled_at),
+            ).fetchone()["n"]
+            if reply_count >= DM_MAX_REPLIES:
+                return
 
     # Resolve chat name early so it's available for the AI prompt
     chat_name_str = getattr(chat_entity, "title", None) or getattr(chat_entity, "first_name", "") or chat_id
