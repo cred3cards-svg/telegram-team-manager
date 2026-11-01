@@ -9,9 +9,49 @@ from database import get_conn
 
 router = APIRouter()
 
-client = anthropic.AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
+_anthropic = anthropic.AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
 
 CRICKETDATA_KEY = os.getenv("CRICKETDATA_API_KEY", "")
+
+# ── AI call with Groq fallback ────────────────────────────────────────────────
+
+async def call_ai(system_prompt: str, user_message: str, max_tokens: int = 100) -> str:
+    """Try Anthropic Haiku first; fall back to Groq Llama-3.1-8B if credits exhausted."""
+    # ── Primary: Anthropic ────────────────────────────────────────────────────
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY", "")
+    if anthropic_key:
+        try:
+            resp = await _anthropic.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=max_tokens,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_message}],
+            )
+            print(f"[ai] anthropic tokens: {resp.usage.input_tokens}in {resp.usage.output_tokens}out")
+            return resp.content[0].text
+        except Exception as e:
+            err = str(e).lower()
+            if "credit" in err or "balance" in err or "quota" in err or "rate" in err:
+                print(f"[ai] Anthropic unavailable ({e}), falling back to Groq")
+            else:
+                raise  # real error — don't mask it
+
+    # ── Fallback: Groq (free tier, Llama 3.1 8B) ─────────────────────────────
+    groq_key = os.getenv("GROQ_API_KEY", "")
+    if not groq_key:
+        raise RuntimeError("No AI provider available — set ANTHROPIC_API_KEY or GROQ_API_KEY")
+    from groq import AsyncGroq
+    groq_client = AsyncGroq(api_key=groq_key)
+    resp = await groq_client.chat.completions.create(
+        model="llama-3.1-8b-instant",
+        max_tokens=max_tokens,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ],
+    )
+    print(f"[ai] groq fallback used — tokens: {resp.usage.total_tokens}")
+    return resp.choices[0].message.content
 BASE_URL = "https://api.cricketdata.org/api/v1"
 
 # ── Cricket data cache ────────────────────────────────────────────────────────
@@ -418,14 +458,8 @@ async def generate_draft(req: DraftRequest):
     )
 
     try:
-        response = await client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=150,
-            system=system,
-            messages=[{"role": "user", "content": req.message_text}],
-        )
-        print(f"Tokens used: {response.usage.input_tokens} in, {response.usage.output_tokens} out")
-        data = parse_ai_response(response.content[0].text)
+        raw = await call_ai(system, req.message_text, max_tokens=100)
+        data = parse_ai_response(raw)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -1,13 +1,11 @@
 import asyncio
 import json
-import os
 import time
 from datetime import datetime, timedelta
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 from telethon import events
 from telethon.tl.types import User, Channel, Chat
-import anthropic
 from database import get_conn, rows_to_list, row_to_dict
 from accounts import get_client_for_account, _clients
 
@@ -194,9 +192,9 @@ async def _maybe_away_reply(client, account_id: int, project_id: int, chat_entit
     project = dict(project) if project else {}
     history = [{"sender": r["sender"], "text": r["text"]} for r in reversed(recent_msgs)]
 
-    # Generate AI draft — uses project's custom prompt if set, else OnlyWin default
+    # Generate AI draft — uses project's custom prompt if set, else ludo default
     try:
-        from ai import build_draft, parse_ai_response
+        from ai import build_draft, parse_ai_response, call_ai
         system_prompt = build_draft(
             message_text=message_text,
             chat_history=history,
@@ -204,15 +202,8 @@ async def _maybe_away_reply(client, account_id: int, project_id: int, chat_entit
             chat_name=chat_name_str,
             project_system_prompt=project.get("system_prompt", ""),
         )
-        ai_client = anthropic.AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
-        response = await ai_client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=100,
-            system=system_prompt,
-            messages=[{"role": "user", "content": message_text}],
-        )
-        print(f"[away] Tokens used: {response.usage.input_tokens} in, {response.usage.output_tokens} out")
-        data = parse_ai_response(response.content[0].text)
+        raw = await call_ai(system_prompt, message_text, max_tokens=100)
+        data = parse_ai_response(raw)
         draft_text = data.get("draft", "")
     except Exception as e:
         print(f"[away] AI draft failed: {e}")
