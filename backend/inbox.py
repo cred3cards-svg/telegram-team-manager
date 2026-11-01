@@ -298,7 +298,7 @@ async def _maybe_away_reply(client, account_id: int, project_id: int, chat_entit
             chat_name=chat_name_str,
             project_system_prompt=project.get("system_prompt", ""),
         )
-        raw = await call_ai(system_prompt, effective_message, max_tokens=100)
+        raw = await call_ai(system_prompt, effective_message, max_tokens=100, jitter=True)
         data = parse_ai_response(raw)
         draft_text = data.get("draft", "")
     except Exception as e:

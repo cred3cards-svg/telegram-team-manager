@@ -15,11 +15,11 @@ CRICKETDATA_KEY = os.getenv("CRICKETDATA_API_KEY", "")
 
 # ── AI call with Groq fallback ────────────────────────────────────────────────
 
-async def call_ai(system_prompt: str, user_message: str, max_tokens: int = 100, force_anthropic: bool = False) -> str:
-    """Groq primary, Anthropic fallback. Jitter spreads burst load across groups."""
+async def call_ai(system_prompt: str, user_message: str, max_tokens: int = 100, force_anthropic: bool = False, jitter: bool = False) -> str:
+    """Groq primary, Anthropic fallback. Pass jitter=True for away auto-replies to spread burst load."""
     import asyncio, random
-    # Small random delay (0–4s) to prevent simultaneous burst when many groups activate at once
-    await asyncio.sleep(random.uniform(0, 4))
+    if jitter:
+        await asyncio.sleep(random.uniform(0, 4))
 
     # ── Primary: Groq openai/gpt-oss-20b ─────────────────────────────────────
     groq_key = os.getenv("GROQ_API_KEY", "")
@@ -28,15 +28,17 @@ async def call_ai(system_prompt: str, user_message: str, max_tokens: int = 100, 
             from groq import AsyncGroq
             groq_client = AsyncGroq(api_key=groq_key)
             resp = await groq_client.chat.completions.create(
-                model="openai/gpt-oss-20b",
+                model="llama-3.3-70b-versatile",
                 max_tokens=max_tokens,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message},
                 ],
             )
+            msg = resp.choices[0].message
+            text = msg.content or getattr(msg, "reasoning_content", "") or ""
             print(f"[ai] groq — tokens: {resp.usage.total_tokens}")
-            return resp.choices[0].message.content
+            return text
         except Exception as e:
             print(f"[ai] Groq failed ({e}), falling back to Anthropic")
 
