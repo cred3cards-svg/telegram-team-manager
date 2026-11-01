@@ -16,11 +16,11 @@ from away import router as away_router
 from discovery import router as discovery_router, run_discovery_loop
 
 
-async def _hourly_prune():
-    """Prune messages table every hour to prevent volume fill."""
+async def _periodic_prune():
+    """Prune messages older than 24h every 30 minutes."""
     while True:
-        await asyncio.sleep(3600)
-        prune_messages(keep_per_chat=50)
+        await asyncio.sleep(1800)
+        prune_messages()
 
 
 @asynccontextmanager
@@ -29,7 +29,7 @@ async def lifespan(app: FastAPI):
     await restore_all_sessions()
     asyncio.create_task(keepalive_all_sessions())
     asyncio.create_task(run_discovery_loop())
-    asyncio.create_task(_hourly_prune())
+    asyncio.create_task(_periodic_prune())
 
     yield
 

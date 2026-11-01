@@ -173,8 +173,8 @@ def init_db():
     # One-time: clear ALL messages/drafts to free disk (accounts/groups preserved)
     _clear_messages_once()
 
-    # Prune messages table on startup to prevent volume fill going forward
-    prune_messages(keep_per_chat=50)
+    # Prune messages older than 24h on startup
+    prune_messages()
 
     # Log account count so we know the DB is alive
     try:
@@ -254,14 +254,18 @@ def _clear_messages_once():
         print(f"[db] clear_messages_once warning: {e}")
 
 
-def prune_messages(keep_per_chat: int = 50):
-    """Delete old messages keeping only the most recent `keep_per_chat` per chat.
+def prune_messages(keep_per_chat: int = 20):
+    """Delete messages older than 24 hours and cap at keep_per_chat per chat.
     Also removes orphaned ai_drafts and runs VACUUM to reclaim disk space."""
     if USE_POSTGRES:
-        return  # Postgres has its own volume management
+        return
+    import datetime as _dt
+    cutoff = (_dt.datetime.utcnow() - _dt.timedelta(hours=24)).isoformat()
     try:
         with get_conn() as conn:
-            # Keep only the top-N message IDs per chat, delete the rest
+            # Drop anything older than 24 hours
+            conn.execute("DELETE FROM messages WHERE timestamp < ?", (cutoff,))
+            # Also cap per-chat to keep_per_chat most recent (belt-and-suspenders)
             conn.execute(
                 """DELETE FROM messages WHERE id NOT IN (
                        SELECT id FROM (
@@ -272,16 +276,14 @@ def prune_messages(keep_per_chat: int = 50):
                    )""",
                 (keep_per_chat,),
             )
-        # Prune orphaned ai_drafts
         with get_conn() as conn:
             conn.execute(
                 "DELETE FROM ai_drafts WHERE message_id NOT IN (SELECT id FROM messages)"
             )
-        # Reclaim disk space — must run outside a transaction
         conn2 = sqlite3.connect(_DB_PATH)
         conn2.execute("VACUUM")
         conn2.close()
-        print(f"[db] pruned messages to {keep_per_chat}/chat; vacuumed disk")
+        print(f"[db] pruned messages older than 24h (cap {keep_per_chat}/chat); vacuumed disk")
     except Exception as e:
         print(f"[db] prune warning: {e}")
 
