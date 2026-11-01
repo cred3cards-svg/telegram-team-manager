@@ -37,7 +37,7 @@ async def call_ai(system_prompt: str, user_message: str, max_tokens: int = 100, 
             )
             msg = resp.choices[0].message
             text = msg.content or getattr(msg, "reasoning_content", "") or ""
-            print(f"[ai] groq — tokens: {resp.usage.total_tokens}")
+            print(f"[ai] groq model={resp.model} tokens={resp.usage.total_tokens} content_len={len(msg.content or '')} text_len={len(text)}")
             return text
         except Exception as e:
             print(f"[ai] Groq failed ({e}), falling back to Anthropic")
