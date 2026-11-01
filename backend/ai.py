@@ -26,7 +26,7 @@ async def call_ai(system_prompt: str, user_message: str, max_tokens: int = 100, 
             from groq import AsyncGroq
             groq_client = AsyncGroq(api_key=groq_key)
             resp = await groq_client.chat.completions.create(
-                model="llama-3.1-8b-instant",
+                model="openai/gpt-oss-20b",
                 max_tokens=max_tokens,
                 messages=[
                     {"role": "system", "content": system_prompt},
