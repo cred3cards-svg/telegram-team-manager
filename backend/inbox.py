@@ -23,6 +23,55 @@ _group_last_processed: dict[str, float] = {}
 _group_message_buffer: dict[str, list[str]] = {}
 GROUP_BUFFER_MAX = 20  # keep at most N messages in buffer
 
+# Spammy group detection — high message rate + few unique senders = bot/spam group
+# Spammy groups get rotating promo posts every 20 min instead of AI replies
+_group_msg_timestamps: dict[str, list[float]] = {}  # recent message arrival times
+_group_spam_cache: dict[str, bool] = {}             # cached classification per chat_id
+SPAM_RATE_WINDOW = 120        # seconds to measure message rate in
+SPAM_RATE_THRESHOLD = 15      # >15 msgs in 2 min = spammy
+SPAM_UNIQUE_RATIO = 0.25      # <25% unique senders in buffer = spammy
+SPAM_COOLDOWN = 1200          # 20 min between promo posts in spammy groups (≈3x/hr)
+_group_promo_idx: dict[str, int] = {}
+
+PROMO_MESSAGES = [
+    "🎲 Free mein ludo aur housie khelo, real prize jeeto! → @ludohousiebot",
+    "🎯 Abhi @ludohousiebot pe game chal raha hai — join karo free mein!",
+    "👥 Yaar sab @ludohousiebot pe hain — ludo housie bilkul free! 🎲",
+    "🏆 Ghar baithe free khelo aur cash jeeto → @ludohousiebot 🎰",
+    "🎮 Bored ho? @ludohousiebot try karo — ludo housie, free entry! t.me/ludohousie",
+]
+
+
+def _classify_spammy(chat_id: str, buffer: list[str]) -> bool:
+    """Return True if the group looks like a bot/spam group."""
+    # Check cached classification (re-evaluate every 10 replies)
+    cached = _group_spam_cache.get(chat_id)
+    if cached is not None:
+        return cached
+
+    now = time.time()
+    # Prune old timestamps
+    ts = _group_msg_timestamps.get(chat_id, [])
+    ts = [t for t in ts if now - t < SPAM_RATE_WINDOW]
+    _group_msg_timestamps[chat_id] = ts
+
+    high_rate = len(ts) >= SPAM_RATE_THRESHOLD
+
+    # Unique sender ratio from buffer
+    if buffer:
+        senders = [line.split(":")[0].strip() for line in buffer if ":" in line]
+        unique_ratio = len(set(senders)) / len(senders) if senders else 1.0
+        low_diversity = unique_ratio < SPAM_UNIQUE_RATIO
+    else:
+        low_diversity = False
+
+    is_spammy = high_rate and low_diversity
+    _group_spam_cache[chat_id] = is_spammy
+    if is_spammy:
+        print(f"[spam] {chat_id} classified as spammy (rate={len(ts)}, unique_ratio={unique_ratio:.2f})")
+    return is_spammy
+
+
 # Max auto-replies per DM per away session before going silent
 DM_MAX_REPLIES = 2
 
@@ -131,12 +180,19 @@ async def register_event_handlers(account_id: int, project_id: int):
             "timestamp": msg.date.isoformat(),
         })
 
-        # Buffer group messages so the AI gets full conversation context per window
+        # Buffer group messages + track arrival rate for spammy detection
         if is_group:
             buf = _group_message_buffer.setdefault(chat_id, [])
             buf.append(f"{sender_name}: {msg.text}")
             if len(buf) > GROUP_BUFFER_MAX:
                 buf.pop(0)
+            # Track message timestamps for rate detection
+            ts = _group_msg_timestamps.setdefault(chat_id, [])
+            ts.append(time.time())
+            if len(ts) > 60:
+                ts.pop(0)
+            # Invalidate spam cache so it re-evaluates on next reply window
+            _group_spam_cache.pop(chat_id, None)
 
         # Away mode: auto-reply to both DMs and groups
         # Use input_chat (already-resolved InputPeer) to avoid PeerUser lookup errors
@@ -155,10 +211,31 @@ async def _maybe_away_reply(client, account_id: int, project_id: int, chat_entit
     if not is_away_for_chat(project_id, account_id, chat_id):
         return
 
-    # Groups: enforce cooldown — only reply once per window
-    # Drain the message buffer when we do reply so AI sees the full conversation
+    # Groups: classify spammy first, then enforce appropriate cooldown
     if chat_type == "group":
         now = time.time()
+        buf_peek = _group_message_buffer.get(chat_id, [])
+        if _classify_spammy(chat_id, buf_peek):
+            # Spammy group: rotating promo every 20 min, no AI call
+            spam_key = f"spam_{chat_id}"
+            if now - _group_last_processed.get(spam_key, 0) < SPAM_COOLDOWN:
+                return
+            _group_last_processed[spam_key] = now
+            _group_message_buffer.pop(chat_id, None)  # discard buffer, not needed
+
+            idx = _group_promo_idx.get(chat_id, 0)
+            promo_text = PROMO_MESSAGES[idx % len(PROMO_MESSAGES)]
+            _group_promo_idx[chat_id] = idx + 1
+
+            send_target = input_chat if input_chat is not None else chat_entity
+            try:
+                await client.send_message(send_target, promo_text)
+                print(f"[spam-promo] {chat_id}: {promo_text[:60]}")
+            except Exception as e:
+                print(f"[spam-promo] send failed {chat_id}: {e}")
+            return
+
+        # Genuine group: normal 5-min cooldown + AI reply
         last = _group_last_processed.get(chat_id, 0)
         if now - last < GROUP_COOLDOWN:
             return  # still in window — message already buffered, skip API call
