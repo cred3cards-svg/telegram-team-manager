@@ -16,10 +16,12 @@ router = APIRouter()
 # Connected WebSocket clients: project_id -> list of WebSocket
 _ws_clients: dict[int, list[WebSocket]] = {}
 
-# Per-group cooldown: chat_id -> timestamp of last time we processed it
-# Groups are silently skipped if a message arrives within GROUP_COOLDOWN seconds
-GROUP_COOLDOWN = 30  # seconds
+# Per-group cooldown: one AI reply per group every 5-10 minutes
+GROUP_COOLDOWN = 300  # seconds (5 minutes)
 _group_last_processed: dict[str, float] = {}
+
+# Max auto-replies per DM per away session before going silent
+DM_MAX_REPLIES = 2
 
 
 class SendMessageRequest(BaseModel):
@@ -167,13 +169,15 @@ async def _maybe_away_reply(client, account_id: int, project_id: int, chat_entit
             print(f"[away] Skipping write-restricted chat {chat_id}")
             return
 
-        # Cap auto-replies at 10 per chat per away session
+        # For DMs: stop after DM_MAX_REPLIES to avoid burning credits on nonsense
+        # For groups: cooldown above already limits frequency
         reply_count = conn.execute(
             "SELECT COUNT(*) as n FROM messages WHERE chat_id=? AND is_outgoing=1 AND timestamp >= ?",
             (chat_row["id"], enabled_at),
         ).fetchone()["n"]
 
-    if reply_count >= 10:
+    cap = DM_MAX_REPLIES if chat_type == "dm" else 10
+    if reply_count >= cap:
         return
 
     # Resolve chat name early so it's available for the AI prompt
@@ -203,7 +207,7 @@ async def _maybe_away_reply(client, account_id: int, project_id: int, chat_entit
         ai_client = anthropic.AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
         response = await ai_client.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=300,
+            max_tokens=100,
             system=system_prompt,
             messages=[{"role": "user", "content": message_text}],
         )
