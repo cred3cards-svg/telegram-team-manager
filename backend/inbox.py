@@ -14,9 +14,14 @@ router = APIRouter()
 # Connected WebSocket clients: project_id -> list of WebSocket
 _ws_clients: dict[int, list[WebSocket]] = {}
 
-# Per-group cooldown: one AI reply per group every 5-10 minutes
-GROUP_COOLDOWN = 300  # seconds (5 minutes)
+# Per-group cooldown: one AI reply per group every 5 minutes
+GROUP_COOLDOWN = 300  # seconds
 _group_last_processed: dict[str, float] = {}
+
+# Buffer of recent group messages per chat_id — accumulated between replies
+# so the AI gets the full conversation context, not just one trigger message
+_group_message_buffer: dict[str, list[str]] = {}
+GROUP_BUFFER_MAX = 20  # keep at most N messages in buffer
 
 # Max auto-replies per DM per away session before going silent
 DM_MAX_REPLIES = 2
@@ -126,6 +131,13 @@ async def register_event_handlers(account_id: int, project_id: int):
             "timestamp": msg.date.isoformat(),
         })
 
+        # Buffer group messages so the AI gets full conversation context per window
+        if is_group:
+            buf = _group_message_buffer.setdefault(chat_id, [])
+            buf.append(f"{sender_name}: {msg.text}")
+            if len(buf) > GROUP_BUFFER_MAX:
+                buf.pop(0)
+
         # Away mode: auto-reply to both DMs and groups
         # Use input_chat (already-resolved InputPeer) to avoid PeerUser lookup errors
         try:
@@ -143,13 +155,13 @@ async def _maybe_away_reply(client, account_id: int, project_id: int, chat_entit
     if not is_away_for_chat(project_id, account_id, chat_id):
         return
 
-    # Groups: enforce 30-second cooldown — ignore every message that arrives
-    # within the window so we never spam or trigger Telegram rate limits
+    # Groups: enforce cooldown — only reply once per window
+    # Drain the message buffer when we do reply so AI sees the full conversation
     if chat_type == "group":
         now = time.time()
         last = _group_last_processed.get(chat_id, 0)
         if now - last < GROUP_COOLDOWN:
-            return  # silent drop — cooldown not expired yet
+            return  # still in window — message already buffered, skip API call
         _group_last_processed[chat_id] = now
 
     with get_conn() as conn:
@@ -192,17 +204,25 @@ async def _maybe_away_reply(client, account_id: int, project_id: int, chat_entit
     project = dict(project) if project else {}
     history = [{"sender": r["sender"], "text": r["text"]} for r in reversed(recent_msgs)]
 
+    # For groups, use buffered messages as conversation context (one API call covers all)
+    if chat_type == "group":
+        buffered = _group_message_buffer.pop(chat_id, [])
+        # Build a compact conversation block for the AI
+        effective_message = "\n".join(buffered) if buffered else message_text
+    else:
+        effective_message = message_text
+
     # Generate AI draft — uses project's custom prompt if set, else ludo default
     try:
         from ai import build_draft, parse_ai_response, call_ai
         system_prompt = build_draft(
-            message_text=message_text,
+            message_text=effective_message,
             chat_history=history,
             chat_type=chat_type,
             chat_name=chat_name_str,
             project_system_prompt=project.get("system_prompt", ""),
         )
-        raw = await call_ai(system_prompt, message_text, max_tokens=100)
+        raw = await call_ai(system_prompt, effective_message, max_tokens=100)
         data = parse_ai_response(raw)
         draft_text = data.get("draft", "")
     except Exception as e:

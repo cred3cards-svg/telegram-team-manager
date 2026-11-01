@@ -15,43 +15,41 @@ CRICKETDATA_KEY = os.getenv("CRICKETDATA_API_KEY", "")
 
 # ── AI call with Groq fallback ────────────────────────────────────────────────
 
-async def call_ai(system_prompt: str, user_message: str, max_tokens: int = 100) -> str:
-    """Try Anthropic Haiku first; fall back to Groq Llama-3.1-8B if credits exhausted."""
-    # ── Primary: Anthropic ────────────────────────────────────────────────────
-    anthropic_key = os.getenv("ANTHROPIC_API_KEY", "")
-    if anthropic_key:
-        try:
-            resp = await _anthropic.messages.create(
-                model="claude-haiku-4-5-20251001",
-                max_tokens=max_tokens,
-                system=system_prompt,
-                messages=[{"role": "user", "content": user_message}],
-            )
-            print(f"[ai] anthropic tokens: {resp.usage.input_tokens}in {resp.usage.output_tokens}out")
-            return resp.content[0].text
-        except Exception as e:
-            err = str(e).lower()
-            if "credit" in err or "balance" in err or "quota" in err or "rate" in err:
-                print(f"[ai] Anthropic unavailable ({e}), falling back to Groq")
-            else:
-                raise  # real error — don't mask it
+async def call_ai(system_prompt: str, user_message: str, max_tokens: int = 100, force_anthropic: bool = False) -> str:
+    """Groq (free, fast) is primary for all chat replies.
+    Anthropic is fallback-only — used only when Groq fails or force_anthropic=True."""
 
-    # ── Fallback: Groq (free tier, Llama 3.1 8B) ─────────────────────────────
+    # ── Primary: Groq llama-3.1-8b-instant (free tier) ───────────────────────
     groq_key = os.getenv("GROQ_API_KEY", "")
-    if not groq_key:
-        raise RuntimeError("No AI provider available — set ANTHROPIC_API_KEY or GROQ_API_KEY")
-    from groq import AsyncGroq
-    groq_client = AsyncGroq(api_key=groq_key)
-    resp = await groq_client.chat.completions.create(
-        model="llama-3.1-8b-instant",
+    if groq_key and not force_anthropic:
+        try:
+            from groq import AsyncGroq
+            groq_client = AsyncGroq(api_key=groq_key)
+            resp = await groq_client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                max_tokens=max_tokens,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message},
+                ],
+            )
+            print(f"[ai] groq — tokens: {resp.usage.total_tokens}")
+            return resp.choices[0].message.content
+        except Exception as e:
+            print(f"[ai] Groq failed ({e}), falling back to Anthropic")
+
+    # ── Fallback: Anthropic Haiku (paid, higher quality) ─────────────────────
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY", "")
+    if not anthropic_key:
+        raise RuntimeError("No AI provider available — set GROQ_API_KEY or ANTHROPIC_API_KEY")
+    resp = await _anthropic.messages.create(
+        model="claude-haiku-4-5-20251001",
         max_tokens=max_tokens,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message},
-        ],
+        system=system_prompt,
+        messages=[{"role": "user", "content": user_message}],
     )
-    print(f"[ai] groq fallback used — tokens: {resp.usage.total_tokens}")
-    return resp.choices[0].message.content
+    print(f"[ai] anthropic fallback — tokens: {resp.usage.input_tokens}in {resp.usage.output_tokens}out")
+    return resp.content[0].text
 BASE_URL = "https://api.cricketdata.org/api/v1"
 
 # ── Cricket data cache ────────────────────────────────────────────────────────
