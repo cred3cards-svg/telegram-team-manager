@@ -19,26 +19,30 @@ from accounts import _clients, get_client_for_account
 
 router = APIRouter()
 
-# ── Keywords covering Indian group categories ─────────────────────────────────
+# ── Keywords focused on Ludo Housie promotions ───────────────────────────────
 
 KEYWORDS = [
-    # Cricket
-    "india cricket", "IPL", "cricket fans india", "cricket prediction",
-    "cricket discussion india", "T20 india",
-    # Bollywood / Entertainment
-    "bollywood", "hindi movies", "desi memes", "indian movies",
-    "bollywood gossip", "web series india",
-    # Adult / 18+
-    "desi adult", "indian adult", "18+ india", "desi hot",
-    # General India chat
-    "india chat", "indian group", "desi chat", "india talks",
-    "india memes", "india news", "indian students",
-    # Finance / Trading
-    "india stocks", "indian trading", "nifty banknifty",
+    # Housie / Tambola (primary targets)
+    "housie", "tambola", "housie india", "tambola india",
+    "online housie", "online tambola", "kitty housie", "housie party",
+    "tambola group", "bingo india",
+    # Ludo
+    "ludo india", "ludo online", "ludo earn", "ludo game india",
+    "ludo king india", "ludo play",
+    # Indian online gaming / earning
+    "online earning india", "earn money india", "paise kamao",
+    "gaming india", "indian gaming", "real cash games india",
+    "fantasy gaming india", "money earning games",
+    # Kitty / Club / Colony groups (housie-friendly audiences)
+    "kitty party india", "ladies kitty", "colony group india",
+    "apartment group", "society group india", "mohalla group",
+    # General Indian money / entertainment groups
+    "india fun", "india game", "desi game", "indian women group",
+    "antakshari india", "teen patti india",
 ]
 
-MIN_MEMBERS = 1000
-DISCOVERY_INTERVAL = 6 * 3600   # run every 6 hours per account
+MIN_MEMBERS = 500          # lower bar — ludo/housie groups are often smaller
+DISCOVERY_INTERVAL = 4 * 3600   # run every 4 hours per account
 _last_run: dict[str, float] = {}  # phone -> last discovery timestamp
 
 
@@ -81,16 +85,20 @@ def _init_discovery_table():
 
 def _categorise(name: str, description: str) -> str:
     text = (name + " " + description).lower()
+    if any(w in text for w in ["housie", "tambola", "bingo", "ludo housie"]):
+        return "housie"
+    if any(w in text for w in ["ludo", "ludo king", "ludo play"]):
+        return "ludo"
+    if any(w in text for w in ["kitty", "ladies kitty", "colony", "apartment", "society", "mohalla", "antakshari"]):
+        return "kitty-club"
+    if any(w in text for w in ["earn", "paise", "kamao", "real cash", "online earning", "money game"]):
+        return "earning"
+    if any(w in text for w in ["fantasy", "gaming", "game india", "desi game"]):
+        return "gaming"
     if any(w in text for w in ["cricket", "ipl", "t20", "prediction"]):
         return "cricket"
-    if any(w in text for w in ["bollywood", "movie", "film", "web series", "hindi"]):
-        return "bollywood"
-    if any(w in text for w in ["adult", "18+", "hot", "desi"]):
-        return "adult"
     if any(w in text for w in ["stock", "trading", "nifty", "finance"]):
         return "finance"
-    if any(w in text for w in ["meme", "funny", "comedy"]):
-        return "memes"
     return "general"
 
 
@@ -104,7 +112,7 @@ def _dynamic_keywords(account_id: int) -> list:
                 "SELECT chat_name FROM chats WHERE account_id=? AND type='group' LIMIT 60",
                 (account_id,)
             ).fetchall()
-        stop = {"the", "and", "for", "chat", "group", "india", "indian", "with", "your",
+        stop = {"the", "and", "for", "chat", "group", "with", "your",
                 "this", "that", "from", "have", "only", "like", "more", "will", "into"}
         extra = set()
         for r in rows:
@@ -129,14 +137,17 @@ def _already_joined_ids(account_id: int) -> set:
         return set()
 
 
-# ── Bot keywords (focused on India) ──────────────────────────────────────────
+# ── Bot keywords sent to @TgFinderBot ────────────────────────────────────────
 
 BOT_KEYWORDS = [
-    "cricket india", "ipl 2025", "india cricket fans",
-    "indian trading", "nifty banknifty", "india stocks",
-    "bollywood india", "hindi movies",
-    "desi memes india", "india memes",
-    "india chat", "indian group", "desi group",
+    "housie india", "tambola india", "online housie", "online tambola",
+    "kitty housie", "housie party", "tambola group",
+    "ludo india", "ludo online", "ludo earn money",
+    "online earning india", "earn money india", "paise kamao",
+    "gaming india", "real cash games india", "fantasy gaming india",
+    "kitty party india", "ladies kitty group", "colony group india",
+    "apartment group india", "society group india",
+    "desi game india", "indian women group", "antakshari india",
 ]
 
 
@@ -333,10 +344,17 @@ async def _discover_for_client(client, phone: str, account_id: int = 0):
 
 
 async def run_discovery_loop():
-    """Background loop — runs discovery for each active account every 6 hours."""
+    """Background loop — runs discovery for each active account every 4 hours."""
     import time
     _init_discovery_table()
-    await asyncio.sleep(30)   # let startup settle first
+    # Clear old irrelevant suggestions once on startup
+    try:
+        with get_conn() as conn:
+            conn.execute("DELETE FROM suggested_groups")
+        print("[discovery] cleared old suggested_groups — fresh ludo/housie scan starting")
+    except Exception:
+        pass
+    await asyncio.sleep(60)   # let accounts connect first
 
     while True:
         with get_conn() as conn:

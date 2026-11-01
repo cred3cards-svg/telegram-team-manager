@@ -33,7 +33,12 @@ def _scrub(account: dict) -> dict:
 async def get_or_create_client(phone: str, session_string: str = "") -> TelegramClient:
     if phone in _clients and _clients[phone].is_connected():
         return _clients[phone]
-    client = TelegramClient(StringSession(session_string), API_ID, API_HASH)
+    client = TelegramClient(
+        StringSession(session_string), API_ID, API_HASH,
+        connection_retries=-1,   # retry forever on drops
+        retry_delay=5,           # 5s between retries
+        auto_reconnect=True,
+    )
     await client.connect()
     _clients[phone] = client
     return client
@@ -58,20 +63,66 @@ async def _activate_account(account_id: int, project_id: int, client: TelegramCl
     asyncio.create_task(register_event_handlers(account_id, project_id))
 
 
+async def keepalive_all_sessions():
+    """Background loop: ping every 4 min, reconnect + re-register if dropped."""
+    from inbox import register_event_handlers
+    while True:
+        await asyncio.sleep(240)  # every 4 minutes
+        with get_conn() as conn:
+            rows = conn.execute(
+                "SELECT id, phone, session_string, project_id FROM accounts WHERE status='active'"
+            ).fetchall()
+        for r in rows_to_list(rows):
+            phone = r["phone"]
+            try:
+                client = _clients.get(phone)
+                if client and client.is_connected():
+                    await client.get_me()   # lightweight ping
+                    print(f"[keepalive] OK: {phone}")
+                else:
+                    print(f"[keepalive] Reconnecting {phone}...")
+                    session = decrypt_session(r["session_string"])
+                    client = await get_or_create_client(phone, session)
+                    if await client.is_user_authorized():
+                        await register_event_handlers(r["id"], r["project_id"])
+                        asyncio.create_task(_sync_dialogs(client, r["id"]))
+                        print(f"[keepalive] Reconnected {phone}")
+                    else:
+                        print(f"[keepalive] Session expired for {phone}")
+            except Exception as e:
+                print(f"[keepalive] Error for {phone}: {e}")
+
+
 async def restore_all_sessions():
+    from inbox import register_event_handlers
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT id, phone, session_string FROM accounts WHERE status='active'"
+            "SELECT id, phone, session_string, project_id FROM accounts WHERE status='active'"
         ).fetchall()
     for r in rows_to_list(rows):
-        if r["session_string"]:
-            try:
-                session = decrypt_session(r["session_string"])
-                client = await get_or_create_client(r["phone"], session)
-                if await client.is_user_authorized():
-                    print(f"[accounts] Restored session for {r['phone']}")
-            except Exception as e:
-                print(f"[accounts] Failed to restore {r['phone']}: {e}")
+        if not r["session_string"]:
+            continue
+        try:
+            session = decrypt_session(r["session_string"])
+            client = await get_or_create_client(r["phone"], session)
+            if await client.is_user_authorized():
+                # Save refreshed session string back to DB
+                fresh = client.session.save()
+                if fresh != session:
+                    with get_conn() as conn:
+                        conn.execute(
+                            "UPDATE accounts SET session_string=? WHERE phone=?",
+                            (encrypt_session(fresh), r["phone"]),
+                        )
+                await register_event_handlers(r["id"], r["project_id"])
+                asyncio.create_task(_sync_dialogs(client, r["id"]))
+                print(f"[startup] Restored {r['phone']}")
+            else:
+                print(f"[startup] Session invalid for {r['phone']} — needs re-login")
+                with get_conn() as conn:
+                    conn.execute("UPDATE accounts SET status='pending' WHERE phone=?", (r["phone"],))
+        except Exception as e:
+            print(f"[startup] Failed to restore {r['phone']}: {e}")
 
 
 async def _sync_dialogs(client: TelegramClient, account_id: int):
@@ -102,7 +153,11 @@ async def _sync_dialogs(client: TelegramClient, account_id: int):
 def _insert_account(conn, project_id: int, phone: str, session_string: str, status: str) -> dict:
     encrypted = encrypt_session(session_string)
     conn.execute(
-        "INSERT OR REPLACE INTO accounts (project_id, phone, session_string, status) VALUES (?,?,?,?)",
+        """INSERT INTO accounts (project_id, phone, session_string, status) VALUES (?,?,?,?)
+           ON CONFLICT(phone) DO UPDATE SET
+             project_id=EXCLUDED.project_id,
+             session_string=EXCLUDED.session_string,
+             status=EXCLUDED.status""",
         (project_id, phone, encrypted, status),
     )
     row = conn.execute("SELECT * FROM accounts WHERE phone=?", (phone,)).fetchone()
@@ -311,10 +366,37 @@ class RemoveRequest(BaseModel):
 @router.delete("/accounts/remove")
 async def remove_account(req: RemoveRequest):
     with get_conn() as conn:
-        row = conn.execute("SELECT phone FROM accounts WHERE id=?", (req.account_id,)).fetchone()
+        row = conn.execute(
+            "SELECT phone, project_id FROM accounts WHERE id=?", (req.account_id,)
+        ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Account not found")
         phone = row["phone"]
+        project_id = row["project_id"]
+
+        # Try to hand group ownership to another active account in the same project
+        other = conn.execute(
+            "SELECT id FROM accounts WHERE project_id=? AND id!=? AND status='active' LIMIT 1",
+            (project_id, req.account_id),
+        ).fetchone()
+
+        # Delete this account's chat rows — group membership is preserved in
+        # project_groups so no data is lost. Transferring chats caused UNIQUE
+        # constraint failures when the target account already had the same group.
+        conn.execute("DELETE FROM messages WHERE chat_id IN (SELECT id FROM chats WHERE account_id=?)", (req.account_id,))
+        conn.execute("DELETE FROM chats WHERE account_id=?", (req.account_id,))
+
+        if other:
+            conn.execute(
+                "UPDATE project_groups SET account_id=? WHERE project_id=? AND account_id=?",
+                (other["id"], project_id, req.account_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE project_groups SET account_id=NULL WHERE project_id=? AND account_id=?",
+                (project_id, req.account_id),
+            )
+
         conn.execute("DELETE FROM accounts WHERE id=?", (req.account_id,))
 
     if phone in _clients:
@@ -365,6 +447,17 @@ async def update_persona(account_id: int, req: PersonaRequest):
     if not row:
         raise HTTPException(status_code=404, detail="Account not found")
     return row_to_dict(row)
+
+
+@router.put("/accounts/{account_id}/project")
+async def reassign_account_project(account_id: int, project_id: int):
+    """Move an account to a different project. Next incoming message uses the new project's prompt."""
+    with get_conn() as conn:
+        conn.execute("UPDATE accounts SET project_id=? WHERE id=?", (project_id, account_id))
+        row = conn.execute("SELECT * FROM accounts WHERE id=?", (account_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Account not found")
+    return _scrub(row_to_dict(row))
 
 
 @router.post("/accounts/sync/{account_id}")

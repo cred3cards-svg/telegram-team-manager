@@ -7,10 +7,11 @@ const STATUS_COLORS = {
   error: "bg-red-500",
 };
 
-export default function AccountCard({ account, onRemove, onSync }) {
+export default function AccountCard({ account, onRemove, onSync, projects = [], onProjectChange }) {
   const [syncing, setSyncing] = React.useState(false);
   const [syncMsg, setSyncMsg] = React.useState("");
   const [showPersona, setShowPersona] = React.useState(false);
+  const [projectChanging, setProjectChanging] = React.useState(false);
   const [personality, setPersonality] = React.useState("");
   const [jobDescription, setJobDescription] = React.useState("");
   const [personaLoading, setPersonaLoading] = React.useState(false);
@@ -71,6 +72,29 @@ export default function AccountCard({ account, onRemove, onSync }) {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {projects.length > 1 && (
+            <select
+              value={account.project_id || ""}
+              disabled={projectChanging}
+              onChange={async (e) => {
+                setProjectChanging(true);
+                try {
+                  await api.reassignAccountProject(account.id, Number(e.target.value));
+                  if (onProjectChange) onProjectChange(account.id, Number(e.target.value));
+                } catch (err) {
+                  alert(err.message);
+                } finally {
+                  setProjectChanging(false);
+                }
+              }}
+              className="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-xs text-slate-300 focus:outline-none focus:border-indigo-500"
+              title="Assign to project"
+            >
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          )}
           <button
             onClick={handleOpenPersona}
             className={`text-xs px-2 py-1 rounded transition-colors ${

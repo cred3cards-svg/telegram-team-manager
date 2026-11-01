@@ -10,6 +10,7 @@ const METHODS = [
 
 export default function Accounts({ project }) {
   const [accounts, setAccounts] = useState([]);
+  const [projects, setProjects] = useState([]);
   const [method, setMethod] = useState("otp");
 
   async function loadAccounts() {
@@ -20,6 +21,10 @@ export default function Accounts({ project }) {
       console.error(e);
     }
   }
+
+  useEffect(() => {
+    api.listProjects().then(setProjects).catch(console.error);
+  }, []);
 
   useEffect(() => {
     loadAccounts();
@@ -84,6 +89,10 @@ export default function Accounts({ project }) {
               account={acc}
               onRemove={handleRemove}
               onSync={api.syncAccount}
+              projects={projects}
+              onProjectChange={(id, pid) =>
+                setAccounts((prev) => prev.map((a) => a.id === id ? { ...a, project_id: pid } : a))
+              }
             />
           ))
         )}
