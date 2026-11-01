@@ -88,6 +88,8 @@ export const api = {
     req("POST", "/discovery/join", { account_id, group_id }),
   runDiscoveryNow: (account_id) =>
     req("POST", `/discovery/run-now?account_id=${account_id}`),
+  searchGroups: (q, account_id, limit = 30) =>
+    req("GET", `/discovery/search?q=${encodeURIComponent(q)}&account_id=${account_id}&limit=${limit}`),
 };
 
 export function createWebSocket(project_id, onMessage) {

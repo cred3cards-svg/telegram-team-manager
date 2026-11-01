@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { api } from "../api";
 
 const CATEGORIES = ["all", "housie", "ludo", "kitty-club", "earning", "gaming", "cricket", "finance", "general"];
+const CAT_LABELS = { "kitty-club": "Kitty/Club", earning: "Earning", gaming: "Gaming", housie: "Housie", ludo: "Ludo", cricket: "Cricket", finance: "Finance", general: "General", all: "All" };
 
 const CAT_COLORS = {
   housie:      "bg-orange-500/20 text-orange-300",
@@ -19,8 +20,10 @@ export default function DiscoveryPanel({ accounts = [], project = null }) {
   const [category, setCategory] = useState("all");
   const [loading, setLoading] = useState(false);
   const [scanning, setScanning] = useState(false);
-  const [joining, setJoining] = useState({});   // group_id -> bool
+  const [joining, setJoining] = useState({});
   const [selectedAccount, setSelectedAccount] = useState(accounts[0]?.id || null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searching, setSearching] = useState(false);
   const hasAccounts = accounts.length > 0;
 
   async function loadGroups() {
@@ -42,12 +45,26 @@ export default function DiscoveryPanel({ accounts = [], project = null }) {
     setScanning(true);
     try {
       await api.runDiscoveryNow(selectedAccount);
-      // Poll after 30s for results
       setTimeout(loadGroups, 30000);
     } catch (e) {
       alert(e.message);
     } finally {
       setScanning(false);
+    }
+  }
+
+  async function handleSearch(e) {
+    e.preventDefault();
+    if (!searchQuery.trim() || !selectedAccount) return;
+    setSearching(true);
+    try {
+      const data = await api.searchGroups(searchQuery.trim(), selectedAccount);
+      setGroups(data);
+      setCategory("all");
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setSearching(false);
     }
   }
 
@@ -99,19 +116,37 @@ export default function DiscoveryPanel({ accounts = [], project = null }) {
         </div>
       </div>
 
+      {/* Custom search */}
+      <form onSubmit={handleSearch} className="flex gap-2 mb-3">
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Search any keyword e.g. 'rummy india', 'ladies group delhi'…"
+          className="flex-1 bg-slate-900 border border-slate-600 rounded-lg px-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+        />
+        <button
+          type="submit"
+          disabled={searching || !hasAccounts || !searchQuery.trim()}
+          className="text-xs px-3 py-1.5 bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white rounded-lg transition-colors whitespace-nowrap"
+        >
+          {searching ? "Searching…" : "Search"}
+        </button>
+      </form>
+
       {/* Category filter */}
       <div className="flex gap-1.5 flex-wrap mb-4">
         {CATEGORIES.map((c) => (
           <button
             key={c}
-            onClick={() => setCategory(c)}
-            className={`px-3 py-1 rounded-lg text-xs capitalize transition-colors ${
-              category === c
+            onClick={() => { setSearchQuery(""); setCategory(c); }}
+            className={`px-3 py-1 rounded-lg text-xs transition-colors ${
+              category === c && !searching
                 ? "bg-indigo-600 text-white"
                 : "text-slate-400 hover:text-slate-200 hover:bg-slate-700"
             }`}
           >
-            {c}
+            {CAT_LABELS[c] || c}
           </button>
         ))}
       </div>

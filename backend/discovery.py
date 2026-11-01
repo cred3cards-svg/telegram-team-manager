@@ -29,19 +29,27 @@ KEYWORDS = [
     # Ludo
     "ludo india", "ludo online", "ludo earn", "ludo game india",
     "ludo king india", "ludo play",
-    # Indian online gaming / earning
+    # Gaming — broad Indian gaming
+    "mobile gaming india", "pubg india", "free fire india", "bgmi india",
+    "gaming group india", "gamer india", "esports india",
+    "call of duty india", "clash of clans india", "india gamers",
+    # Casual / card / board games
+    "rummy india", "teen patti india", "carrom india", "chess india",
+    "online games india", "casual gaming india",
+    # Indian online earning / money games
     "online earning india", "earn money india", "paise kamao",
-    "gaming india", "indian gaming", "real cash games india",
-    "fantasy gaming india", "money earning games",
-    # Kitty / Club / Colony groups (housie-friendly audiences)
+    "real cash games india", "fantasy gaming india", "money earning games",
+    "dream11 india", "fantasy cricket india",
+    # Kitty / Club / Colony (housie-friendly audiences)
     "kitty party india", "ladies kitty", "colony group india",
     "apartment group", "society group india", "mohalla group",
-    # General Indian money / entertainment groups
-    "india fun", "india game", "desi game", "indian women group",
-    "antakshari india", "teen patti india",
+    # Large active Indian general groups
+    "india chat", "desi chat", "indian group", "india masti",
+    "india fun", "desi memes", "india talks", "india viral",
+    "indian students", "antakshari india", "indian women group", "desi game",
 ]
 
-MIN_MEMBERS = 500          # lower bar — ludo/housie groups are often smaller
+MIN_MEMBERS = 300          # cast wider net
 DISCOVERY_INTERVAL = 4 * 3600   # run every 4 hours per account
 _last_run: dict[str, float] = {}  # phone -> last discovery timestamp
 
@@ -91,13 +99,14 @@ def _categorise(name: str, description: str) -> str:
         return "ludo"
     if any(w in text for w in ["kitty", "ladies kitty", "colony", "apartment", "society", "mohalla", "antakshari"]):
         return "kitty-club"
-    if any(w in text for w in ["earn", "paise", "kamao", "real cash", "online earning", "money game"]):
+    if any(w in text for w in ["earn", "paise", "kamao", "real cash", "online earning", "money game", "dream11", "fantasy"]):
         return "earning"
-    if any(w in text for w in ["fantasy", "gaming", "game india", "desi game"]):
+    if any(w in text for w in ["pubg", "bgmi", "free fire", "esport", "gaming", "gamer", "clash", "call of duty",
+                                "rummy", "teen patti", "carrom", "chess", "game india", "desi game", "casual game"]):
         return "gaming"
     if any(w in text for w in ["cricket", "ipl", "t20", "prediction"]):
         return "cricket"
-    if any(w in text for w in ["stock", "trading", "nifty", "finance"]):
+    if any(w in text for w in ["stock", "trading", "nifty", "finance", "invest"]):
         return "finance"
     return "general"
 
@@ -143,11 +152,13 @@ BOT_KEYWORDS = [
     "housie india", "tambola india", "online housie", "online tambola",
     "kitty housie", "housie party", "tambola group",
     "ludo india", "ludo online", "ludo earn money",
+    "pubg india", "free fire india", "bgmi india", "gaming india",
+    "rummy india", "teen patti india", "online games india",
     "online earning india", "earn money india", "paise kamao",
-    "gaming india", "real cash games india", "fantasy gaming india",
+    "real cash games india", "fantasy gaming india", "dream11 india",
     "kitty party india", "ladies kitty group", "colony group india",
-    "apartment group india", "society group india",
-    "desi game india", "indian women group", "antakshari india",
+    "india chat", "desi memes india", "india masti", "india viral",
+    "indian students group", "indian women group", "antakshari india",
 ]
 
 
@@ -471,3 +482,56 @@ async def trigger_discovery_now(account_id: int):
         raise HTTPException(status_code=404, detail="Account not found")
     asyncio.create_task(_discover_for_client(client, row["phone"], account_id))
     return {"status": "discovery started"}
+
+
+@router.get("/discovery/search")
+async def search_groups(q: str, account_id: int, limit: int = 30):
+    """Live Telegram search for a custom keyword — saves results to suggested_groups."""
+    if not q or len(q.strip()) < 2:
+        raise HTTPException(status_code=400, detail="Query too short")
+    from accounts import get_client_for_account as gca
+    client = await gca(account_id)
+    try:
+        result = await client(SearchRequest(q=q.strip(), limit=min(limit, 50)))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    found = []
+    seen: set[str] = set()
+    for chat in result.chats:
+        if not isinstance(chat, Channel) or not getattr(chat, "megagroup", False):
+            continue
+        if getattr(chat, "restricted", False) or getattr(chat, "private", False):
+            continue
+        members = getattr(chat, "participants_count", 0) or 0
+        if members < MIN_MEMBERS:
+            continue
+        gid = str(chat.id)
+        if gid in seen:
+            continue
+        seen.add(gid)
+        username = getattr(chat, "username", "") or ""
+        description = ""
+        online = 0
+        try:
+            full = await client(GetFullChannelRequest(chat))
+            description = getattr(full.full_chat, "about", "") or ""
+            online = getattr(full.full_chat, "online_count", 0) or 0
+        except Exception:
+            pass
+        g = {
+            "group_id": gid,
+            "username": username,
+            "name": chat.title,
+            "description": description[:200],
+            "members": members,
+            "online_members": online,
+            "category": _categorise(chat.title, description),
+            "discovered_at": datetime.utcnow().isoformat(),
+        }
+        found.append(g)
+
+    if found:
+        await _upsert_groups(found)
+
+    return found
