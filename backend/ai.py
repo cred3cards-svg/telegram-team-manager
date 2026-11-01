@@ -16,10 +16,12 @@ CRICKETDATA_KEY = os.getenv("CRICKETDATA_API_KEY", "")
 # ── AI call with Groq fallback ────────────────────────────────────────────────
 
 async def call_ai(system_prompt: str, user_message: str, max_tokens: int = 100, force_anthropic: bool = False) -> str:
-    """Groq (free, fast) is primary for all chat replies.
-    Anthropic is fallback-only — used only when Groq fails or force_anthropic=True."""
+    """Groq primary, Anthropic fallback. Jitter spreads burst load across groups."""
+    import asyncio, random
+    # Small random delay (0–4s) to prevent simultaneous burst when many groups activate at once
+    await asyncio.sleep(random.uniform(0, 4))
 
-    # ── Primary: Groq llama-3.1-8b-instant (free tier) ───────────────────────
+    # ── Primary: Groq openai/gpt-oss-20b ─────────────────────────────────────
     groq_key = os.getenv("GROQ_API_KEY", "")
     if groq_key and not force_anthropic:
         try:
@@ -340,7 +342,7 @@ def build_draft(
     """Sync helper used by inbox.py away replies (no live cricket context)."""
     history_str = "\n".join(
         f"{m.get('sender', 'User')}: {m.get('text', '')}"
-        for m in chat_history[-3:]
+        for m in chat_history[-2:]  # last 2 only — saves ~100 tokens per call
     )
 
     # ── Custom project prompt overrides everything ────────────────────────────
