@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 from telethon import events
 from telethon.tl.types import User, Channel, Chat
-from database import get_conn, rows_to_list, row_to_dict
+from database import get_conn, rows_to_list, row_to_dict, now_ist
 from accounts import get_client_for_account, _clients
 
 router = APIRouter()
@@ -98,7 +98,7 @@ def _upsert_chat(conn, account_id: int, chat_id: str, chat_name: str, chat_type:
 
 
 def _insert_message(conn, chat_row_id: int, sender: str, text: str, is_outgoing: bool):
-    ts = datetime.utcnow().isoformat()
+    ts = now_ist()
     conn.execute(
         "INSERT INTO messages (chat_id, sender, text, timestamp, is_outgoing) VALUES (?,?,?,?,?)",
         (chat_row_id, sender, text, ts, 1 if is_outgoing else 0),
@@ -183,7 +183,7 @@ async def register_event_handlers(account_id: int, project_id: int):
         # Buffer group messages + track arrival rate for spammy detection
         if is_group:
             buf = _group_message_buffer.setdefault(chat_id, [])
-            buf.append(f"{sender_name}: {msg.text}")
+            buf.append(f"{sender_name}: {msg.text[:80]}")  # truncate per entry
             if len(buf) > GROUP_BUFFER_MAX:
                 buf.pop(0)
             # Track message timestamps for rate detection
@@ -282,8 +282,9 @@ async def _maybe_away_reply(client, account_id: int, project_id: int, chat_entit
     # For groups, use buffered messages as conversation context (one API call covers all)
     if chat_type == "group":
         buffered = _group_message_buffer.pop(chat_id, [])
-        # Build a compact conversation block for the AI
-        effective_message = "\n".join(buffered) if buffered else message_text
+        # Build a compact conversation block for the AI (cap total to 400 chars)
+        combined = "\n".join(buffered) if buffered else message_text
+        effective_message = combined[:400]
     else:
         effective_message = message_text
 
@@ -345,7 +346,7 @@ async def _maybe_away_reply(client, account_id: int, project_id: int, chat_entit
                VALUES (?,?,?,?,?,?,?,?,?)""",
             (project_id, account_id, chat_id, chat_name_str, message_text, draft_text,
              data.get("category", "general"), data.get("urgency", "medium"),
-             datetime.utcnow().isoformat()),
+             now_ist()),
         )
 
     await _broadcast(project_id, {
@@ -353,7 +354,7 @@ async def _maybe_away_reply(client, account_id: int, project_id: int, chat_entit
         "account_id": account_id,
         "chat_id": chat_id,
         "text": draft_text,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": now_ist(),
     })
     print(f"[away] Auto-replied to {chat_id}: {draft_text[:60]}...")
 

@@ -1,7 +1,16 @@
 import os
 import sqlite3
 from contextlib import contextmanager
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from cryptography.fernet import Fernet
+
+_IST = ZoneInfo("Asia/Kolkata")
+
+
+def now_ist() -> str:
+    """Return current IST time as an ISO string (timezone-aware)."""
+    return datetime.now(_IST).isoformat()
 
 # ── Fernet encryption ─────────────────────────────────────────────────────────
 
@@ -260,7 +269,7 @@ def prune_messages(keep_per_chat: int = 20):
     if USE_POSTGRES:
         return
     import datetime as _dt
-    cutoff = (_dt.datetime.utcnow() - _dt.timedelta(hours=24)).isoformat()
+    cutoff = (_dt.datetime.now(_IST) - _dt.timedelta(hours=24)).isoformat()
     try:
         with get_conn() as conn:
             # Drop anything older than 24 hours
@@ -290,8 +299,7 @@ def prune_messages(keep_per_chat: int = 20):
 
 def _backfill_project_groups():
     """One-time migration: copy any chats (type=group) not yet in project_groups."""
-    import datetime as _dt
-    now = _dt.datetime.utcnow().isoformat()
+    now = now_ist()
     try:
         with get_conn() as conn:
             rows = conn.execute(

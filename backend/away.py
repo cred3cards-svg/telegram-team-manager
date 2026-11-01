@@ -1,9 +1,10 @@
 import json
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List
-from database import get_conn, row_to_dict, rows_to_list
+from database import get_conn, row_to_dict, rows_to_list, now_ist, _IST
 
 router = APIRouter()
 
@@ -27,7 +28,9 @@ def get_away_status(project_id: int) -> dict:
                 "target_mode": "all", "target_chat_ids": []}
 
     away_until = datetime.fromisoformat(row["away_until"])
-    now = datetime.utcnow()
+    now = datetime.now(_IST)
+    if away_until.tzinfo is None:
+        away_until = away_until.replace(tzinfo=_IST)
     if now >= away_until:
         with get_conn() as conn:
             conn.execute("DELETE FROM away_sessions WHERE project_id=?", (project_id,))
@@ -42,7 +45,7 @@ def get_away_status(project_id: int) -> dict:
     return {
         "active": True,
         "away_until": away_until.isoformat(),
-        "seconds_remaining": int((away_until - now).total_seconds()),
+        "seconds_remaining": max(0, int((away_until - now).total_seconds())),
         "target_mode": row["target_mode"] or "all",
         "target_chat_ids": target_chat_ids,
     }
@@ -67,7 +70,7 @@ def is_away_for_chat(project_id: int, account_id: int, chat_id: str, chat_type: 
 @router.post("/away/enable")
 async def enable_away(req: AwayEnableRequest):
     hours = min(max(req.hours, 0.5), MAX_HOURS)
-    now = datetime.utcnow()
+    now = datetime.now(_IST)
     away_until = now + timedelta(hours=hours)
 
     with get_conn() as conn:
