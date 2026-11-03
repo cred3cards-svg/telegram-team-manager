@@ -15,32 +15,69 @@ CRICKETDATA_KEY = os.getenv("CRICKETDATA_API_KEY", "")
 
 # ── AI call with Groq fallback ────────────────────────────────────────────────
 
+# Models to try in order — skip if they return 404 (not on this account)
+_GROQ_MODELS = [
+    "llama-3.1-8b-instant",
+    "llama3-8b-8192",
+    "gemma2-9b-it",
+    "llama3-70b-8192",
+    "mixtral-8x7b-32768",
+]
+_groq_model_cache: list[str] | None = None  # set after first successful call
+
+
+async def _pick_groq_model(groq_client) -> str | None:
+    """Return first available model from _GROQ_MODELS, cached after first call."""
+    global _groq_model_cache
+    if _groq_model_cache is not None:
+        return _groq_model_cache[0] if _groq_model_cache else None
+    # Probe each candidate with a minimal call
+    for model in _GROQ_MODELS:
+        try:
+            r = await groq_client.chat.completions.create(
+                model=model, max_tokens=5,
+                messages=[{"role": "user", "content": "hi"}],
+            )
+            if r.choices[0].message.content:
+                _groq_model_cache = [model]
+                print(f"[ai] Groq using model: {model}")
+                return model
+        except Exception:
+            continue
+    _groq_model_cache = []
+    return None
+
+
 async def call_ai(system_prompt: str, user_message: str, max_tokens: int = 100, force_anthropic: bool = False, jitter: bool = False) -> str:
-    """Groq primary, Anthropic fallback. Pass jitter=True for away auto-replies to spread burst load."""
+    """Groq primary (auto-picks working model), Anthropic fallback."""
     import asyncio, random
     if jitter:
         await asyncio.sleep(random.uniform(0, 4))
 
-    # ── Primary: Groq openai/gpt-oss-20b ─────────────────────────────────────
     groq_key = os.getenv("GROQ_API_KEY", "")
     if groq_key and not force_anthropic:
         try:
             from groq import AsyncGroq
             groq_client = AsyncGroq(api_key=groq_key)
-            resp = await groq_client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                max_tokens=max_tokens,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_message},
-                ],
-            )
-            msg = resp.choices[0].message
-            text = msg.content or getattr(msg, "reasoning_content", "") or ""
-            print(f"[ai] groq model={resp.model} tokens={resp.usage.total_tokens} content_len={len(msg.content or '')} text_len={len(text)}")
-            return text
+            model = await _pick_groq_model(groq_client)
+            if model:
+                resp = await groq_client.chat.completions.create(
+                    model=model,
+                    max_tokens=max_tokens,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_message},
+                    ],
+                )
+                msg = resp.choices[0].message
+                text = msg.content or getattr(msg, "reasoning_content", "") or ""
+                print(f"[ai] groq model={model} tokens={resp.usage.total_tokens} text_len={len(text)}")
+                if text:
+                    return text
         except Exception as e:
             print(f"[ai] Groq failed ({e}), falling back to Anthropic")
+            global _groq_model_cache
+            _groq_model_cache = None  # re-probe on next call in case of rate limit/model change
 
     # ── Fallback: Anthropic Haiku (paid, higher quality) ─────────────────────
     anthropic_key = os.getenv("ANTHROPIC_API_KEY", "")
@@ -351,8 +388,8 @@ class DraftResponse(BaseModel):
 
 @router.post("/ai/draft", response_model=DraftResponse)
 async def generate_draft(req: DraftRequest):
-    if not os.getenv("ANTHROPIC_API_KEY"):
-        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured")
+    if not os.getenv("ANTHROPIC_API_KEY") and not os.getenv("GROQ_API_KEY"):
+        raise HTTPException(status_code=500, detail="No AI provider configured")
 
     history_strs = [
         f"{m.get('sender', 'User')}: {m.get('text', '')}"
