@@ -17,12 +17,9 @@ CRICKETDATA_KEY = os.getenv("CRICKETDATA_API_KEY", "")
 
 # Models to try in order — skip if they return 404 (not on this account)
 _GROQ_MODELS = [
-    "llama-3.1-8b-instant",
-    "llama3-8b-8192",
-    "gemma2-9b-it",
-    "llama3-70b-8192",
-    "mixtral-8x7b-32768",
-    "openai/gpt-oss-20b",  # reasoning model — check reasoning_content fallback
+    "qwen/qwen3.8-27b",       # Qwen3 chat model — primary
+    "openai/gpt-oss-120b",    # reasoning model, bigger — check reasoning_content
+    "openai/gpt-oss-20b",     # reasoning model — check reasoning_content
 ]
 _groq_model_cache: list[str] | None = None  # set after first successful call
 
@@ -35,9 +32,11 @@ async def _pick_groq_model(groq_client) -> str | None:
     # Probe each candidate with a minimal call
     for model in _GROQ_MODELS:
         try:
+            extra = {"thinking": {"type": "disabled"}} if "qwen" in model else {}
             r = await groq_client.chat.completions.create(
                 model=model, max_tokens=10,
                 messages=[{"role": "user", "content": "Say hi"}],
+                **({"extra_body": extra} if extra else {}),
             )
             msg = r.choices[0].message
             text = msg.content or getattr(msg, "reasoning_content", "") or ""
@@ -66,6 +65,7 @@ async def call_ai(system_prompt: str, user_message: str, max_tokens: int = 100, 
             groq_client = AsyncGroq(api_key=groq_key)
             model = await _pick_groq_model(groq_client)
             if model:
+                extra = {"thinking": {"type": "disabled"}} if "qwen" in model else {}
                 resp = await groq_client.chat.completions.create(
                     model=model,
                     max_tokens=max_tokens,
@@ -73,6 +73,7 @@ async def call_ai(system_prompt: str, user_message: str, max_tokens: int = 100, 
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_message},
                     ],
+                    **({"extra_body": extra} if extra else {}),
                 )
                 msg = resp.choices[0].message
                 text = msg.content or getattr(msg, "reasoning_content", "") or ""
