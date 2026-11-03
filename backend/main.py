@@ -7,6 +7,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+print("[boot] version=2026-11-03-v1 groq-auto-probe")
+
 from database import init_db, prune_messages, _DB_PATH
 from accounts import router as accounts_router, restore_all_sessions, keepalive_all_sessions
 from groups import router as groups_router
