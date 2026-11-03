@@ -33,7 +33,7 @@ async def _pick_groq_model(groq_client) -> str | None:
     for model in _GROQ_MODELS:
         try:
             r = await groq_client.chat.completions.create(
-                model=model, max_tokens=10,
+                model=model, max_tokens=20,
                 messages=[{"role": "user", "content": "Say hi"}],
             )
             msg = r.choices[0].message
@@ -408,7 +408,7 @@ async def generate_draft(req: DraftRequest):
     )
 
     try:
-        raw = await call_ai(system, req.message_text[:200], max_tokens=100)
+        raw = await call_ai(system, req.message_text[:200], max_tokens=200)
         data = parse_ai_response(raw)
         print(f"[draft] raw={raw[:120]!r} → draft={data.get('draft','')[:60]!r}")
     except Exception as e:
