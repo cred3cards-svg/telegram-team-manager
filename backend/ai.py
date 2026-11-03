@@ -22,6 +22,7 @@ _GROQ_MODELS = [
     "gemma2-9b-it",
     "llama3-70b-8192",
     "mixtral-8x7b-32768",
+    "openai/gpt-oss-20b",  # reasoning model — check reasoning_content fallback
 ]
 _groq_model_cache: list[str] | None = None  # set after first successful call
 
@@ -35,14 +36,18 @@ async def _pick_groq_model(groq_client) -> str | None:
     for model in _GROQ_MODELS:
         try:
             r = await groq_client.chat.completions.create(
-                model=model, max_tokens=5,
-                messages=[{"role": "user", "content": "hi"}],
+                model=model, max_tokens=10,
+                messages=[{"role": "user", "content": "Say hi"}],
             )
-            if r.choices[0].message.content:
+            msg = r.choices[0].message
+            text = msg.content or getattr(msg, "reasoning_content", "") or ""
+            print(f"[ai] probe {model}: tokens={r.usage.total_tokens} text_len={len(text)} content={repr((msg.content or '')[:30])}")
+            if text.strip():
                 _groq_model_cache = [model]
                 print(f"[ai] Groq using model: {model}")
                 return model
-        except Exception:
+        except Exception as e:
+            print(f"[ai] probe {model}: failed ({type(e).__name__}: {str(e)[:80]})")
             continue
     _groq_model_cache = []
     return None
@@ -438,6 +443,22 @@ async def mark_draft_used(message_id: int, was_used: bool = True):
             (1 if was_used else 0, message_id),
         )
     return {"status": "updated"}
+
+
+@router.get("/debug/groq-models")
+async def list_groq_models():
+    """List all models available on the configured Groq API key."""
+    groq_key = os.getenv("GROQ_API_KEY", "")
+    if not groq_key:
+        return {"error": "GROQ_API_KEY not set"}
+    try:
+        from groq import AsyncGroq
+        client = AsyncGroq(api_key=groq_key)
+        result = await client.models.list()
+        models = sorted([m.id for m in result.data])
+        return {"models": models, "count": len(models), "cache": _groq_model_cache}
+    except Exception as e:
+        return {"error": str(e)}
 
 
 @router.get("/projects/list")
