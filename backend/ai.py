@@ -32,11 +32,9 @@ async def _pick_groq_model(groq_client) -> str | None:
     # Probe each candidate with a minimal call
     for model in _GROQ_MODELS:
         try:
-            extra = {"thinking": {"type": "disabled"}} if "qwen" in model else {}
             r = await groq_client.chat.completions.create(
                 model=model, max_tokens=10,
                 messages=[{"role": "user", "content": "Say hi"}],
-                **({"extra_body": extra} if extra else {}),
             )
             msg = r.choices[0].message
             text = msg.content or getattr(msg, "reasoning_content", "") or ""
@@ -65,7 +63,6 @@ async def call_ai(system_prompt: str, user_message: str, max_tokens: int = 100, 
             groq_client = AsyncGroq(api_key=groq_key)
             model = await _pick_groq_model(groq_client)
             if model:
-                extra = {"thinking": {"type": "disabled"}} if "qwen" in model else {}
                 resp = await groq_client.chat.completions.create(
                     model=model,
                     max_tokens=max_tokens,
@@ -73,7 +70,6 @@ async def call_ai(system_prompt: str, user_message: str, max_tokens: int = 100, 
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_message},
                     ],
-                    **({"extra_body": extra} if extra else {}),
                 )
                 msg = resp.choices[0].message
                 text = msg.content or getattr(msg, "reasoning_content", "") or ""
