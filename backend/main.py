@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-print("[boot] version=2026-11-04-v1 group-draft-cache")
+print("[boot] version=2026-11-04-v2 auto-join-eval")
 
 from database import init_db, prune_messages, _DB_PATH
 from accounts import router as accounts_router, restore_all_sessions, keepalive_all_sessions
@@ -16,6 +16,7 @@ from inbox import router as inbox_router
 from ai import router as ai_router
 from away import router as away_router
 from discovery import router as discovery_router, run_discovery_loop
+from auto_join import run_auto_join_loop, run_auto_eval_loop
 
 
 async def _periodic_prune():
@@ -31,6 +32,8 @@ async def lifespan(app: FastAPI):
     await restore_all_sessions()
     asyncio.create_task(keepalive_all_sessions())
     asyncio.create_task(run_discovery_loop())
+    asyncio.create_task(run_auto_join_loop())
+    asyncio.create_task(run_auto_eval_loop())
     asyncio.create_task(_periodic_prune())
 
     yield

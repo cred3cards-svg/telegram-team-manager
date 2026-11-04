@@ -208,6 +208,9 @@ def _migrate_columns():
         "ALTER TABLE projects ADD COLUMN system_prompt TEXT DEFAULT ''",
         "ALTER TABLE chats ADD COLUMN write_restricted INTEGER DEFAULT 0",
         "ALTER TABLE project_groups ADD COLUMN write_restricted INTEGER DEFAULT 0",
+        "ALTER TABLE project_groups ADD COLUMN auto_joined INTEGER DEFAULT 0",
+        "ALTER TABLE project_groups ADD COLUMN human_score REAL DEFAULT 0.5",
+        "ALTER TABLE project_groups ADD COLUMN left_at TEXT",
     ]
     for sql in migrations:
         try:
