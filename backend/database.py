@@ -433,5 +433,6 @@ def set_cached_group_draft(project_id: int, chat_id: str, draft_text: str):
                      cached_at=excluded.cached_at""",
                 (project_id, chat_id, draft_text, now_ist()),
             )
+        print(f"[cache] stored draft for {chat_id}: {draft_text[:60]}")
     except Exception as e:
         print(f"[cache] set_cached_group_draft failed: {e}")
