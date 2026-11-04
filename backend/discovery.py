@@ -358,13 +358,6 @@ async def run_discovery_loop():
     """Background loop — runs discovery for each active account every 4 hours."""
     import time
     _init_discovery_table()
-    # Clear old irrelevant suggestions once on startup
-    try:
-        with get_conn() as conn:
-            conn.execute("DELETE FROM suggested_groups")
-        print("[discovery] cleared old suggested_groups — fresh ludo/housie scan starting")
-    except Exception:
-        pass
     await asyncio.sleep(60)   # let accounts connect first
 
     while True:

@@ -256,7 +256,7 @@ async def _run_eval():
 # ── Background task entry points ──────────────────────────────────────────────
 
 async def run_auto_join_loop():
-    await asyncio.sleep(90)  # wait for accounts to restore
+    await asyncio.sleep(300)  # wait for accounts + discovery first pass
     while True:
         try:
             await _run_joins()
