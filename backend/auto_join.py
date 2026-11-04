@@ -100,7 +100,7 @@ async def _run_joins():
 
         with get_conn() as conn:
             accounts = conn.execute(
-                "SELECT id, phone FROM accounts WHERE project_id=? AND status='connected'",
+                "SELECT id, phone FROM accounts WHERE project_id=? AND status='active'",
                 (project_id,),
             ).fetchall()
             if not accounts:
