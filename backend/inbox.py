@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 from telethon import events
 from telethon.tl.types import User, Channel, Chat
-from database import get_conn, rows_to_list, row_to_dict, now_ist
+from database import get_conn, rows_to_list, row_to_dict, now_ist, get_cached_group_draft, set_cached_group_draft
 from accounts import get_client_for_account, _clients
 
 router = APIRouter()
@@ -288,19 +288,27 @@ async def _maybe_away_reply(client, account_id: int, project_id: int, chat_entit
     else:
         effective_message = message_text
 
-    # Generate AI draft — uses project's custom prompt if set, else ludo default
+    # Generate AI draft — check group cache first to avoid Groq rate limits
     try:
         from ai import build_draft, parse_ai_response, call_ai
-        system_prompt = build_draft(
-            message_text=effective_message,
-            chat_history=history,
-            chat_type=chat_type,
-            chat_name=chat_name_str,
-            project_system_prompt=project.get("system_prompt", ""),
-        )
-        raw = await call_ai(system_prompt, effective_message, max_tokens=100, jitter=True)
-        data = parse_ai_response(raw)
-        draft_text = data.get("draft", "")
+        cached = get_cached_group_draft(project_id, chat_id) if chat_type == "group" else None
+        data = {}
+        if cached:
+            draft_text = cached
+            print(f"[away] cache hit {chat_id}: {draft_text[:60]}")
+        else:
+            system_prompt = build_draft(
+                message_text=effective_message,
+                chat_history=history,
+                chat_type=chat_type,
+                chat_name=chat_name_str,
+                project_system_prompt=project.get("system_prompt", ""),
+            )
+            raw = await call_ai(system_prompt, effective_message, max_tokens=100, jitter=True)
+            data = parse_ai_response(raw)
+            draft_text = data.get("draft", "")
+            if draft_text and chat_type == "group":
+                set_cached_group_draft(project_id, chat_id, draft_text)
     except Exception as e:
         print(f"[away] AI draft failed: {e}")
         return

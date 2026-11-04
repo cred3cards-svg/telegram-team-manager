@@ -143,6 +143,14 @@ _TABLES = [
         joined_at TEXT NOT NULL,
         UNIQUE(project_id, group_id)
     )""",
+    """CREATE TABLE IF NOT EXISTS group_draft_cache (
+        id {serial} PRIMARY KEY,
+        project_id INTEGER NOT NULL,
+        chat_id TEXT NOT NULL,
+        draft_text TEXT NOT NULL,
+        cached_at TEXT NOT NULL,
+        UNIQUE(project_id, chat_id)
+    )""",
 ]
 
 
@@ -392,3 +400,38 @@ def row_to_dict(row):
 
 def rows_to_list(rows):
     return [dict(r) for r in rows]
+
+
+def get_cached_group_draft(project_id: int, chat_id: str, max_age_hours: int = 4) -> str | None:
+    """Return cached away-reply draft for this group if newer than max_age_hours."""
+    try:
+        with get_conn() as conn:
+            row = conn.execute(
+                "SELECT draft_text, cached_at FROM group_draft_cache WHERE project_id=? AND chat_id=?",
+                (project_id, chat_id),
+            ).fetchone()
+        if not row:
+            return None
+        cached_at = datetime.fromisoformat(row["cached_at"])
+        if cached_at.tzinfo is None:
+            cached_at = cached_at.replace(tzinfo=_IST)
+        age_hours = (datetime.now(_IST) - cached_at).total_seconds() / 3600
+        return row["draft_text"] if age_hours < max_age_hours else None
+    except Exception:
+        return None
+
+
+def set_cached_group_draft(project_id: int, chat_id: str, draft_text: str):
+    """Store or refresh cached away-reply draft for this group."""
+    try:
+        with get_conn() as conn:
+            conn.execute(
+                """INSERT INTO group_draft_cache (project_id, chat_id, draft_text, cached_at)
+                   VALUES (?,?,?,?)
+                   ON CONFLICT(project_id, chat_id) DO UPDATE SET
+                     draft_text=excluded.draft_text,
+                     cached_at=excluded.cached_at""",
+                (project_id, chat_id, draft_text, now_ist()),
+            )
+    except Exception as e:
+        print(f"[cache] set_cached_group_draft failed: {e}")
