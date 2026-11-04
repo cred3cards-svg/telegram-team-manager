@@ -149,7 +149,7 @@ async def register_event_handlers(account_id: int, project_id: int):
         chat_type = "group" if is_group else "dm"
         chat_id = str(chat_entity.id)
         chat_name = getattr(chat_entity, "title", None) or getattr(chat_entity, "first_name", "Unknown")
-        sender_name = getattr(sender_entity, "first_name", None) or getattr(sender_entity, "username", "Unknown")
+        sender_name = getattr(sender_entity, "first_name", None) or getattr(sender_entity, "username", None) or "Unknown"
 
         # Look up current project_id live — supports re-assigning accounts to projects
         with get_conn() as conn:
