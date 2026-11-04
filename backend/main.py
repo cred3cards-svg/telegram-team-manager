@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-print("[boot] version=2026-11-04-v2 auto-join-eval")
+print("[boot] version=2026-11-04-v3 auto-join-api")
 
 from database import init_db, prune_messages, _DB_PATH
 from accounts import router as accounts_router, restore_all_sessions, keepalive_all_sessions
@@ -16,7 +16,7 @@ from inbox import router as inbox_router
 from ai import router as ai_router
 from away import router as away_router
 from discovery import router as discovery_router, run_discovery_loop
-from auto_join import run_auto_join_loop, run_auto_eval_loop
+from auto_join import run_auto_join_loop, run_auto_eval_loop, router as auto_join_router
 
 
 async def _periodic_prune():
@@ -55,6 +55,7 @@ app.include_router(inbox_router)
 app.include_router(ai_router)
 app.include_router(away_router)
 app.include_router(discovery_router)
+app.include_router(auto_join_router)
 
 
 @app.get("/health")

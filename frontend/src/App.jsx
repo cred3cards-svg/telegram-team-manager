@@ -4,12 +4,14 @@ import Dashboard from "./pages/Dashboard";
 import Inbox from "./pages/Inbox";
 import Groups from "./pages/Groups";
 import Accounts from "./pages/Accounts";
+import AutoJoin from "./pages/AutoJoin";
 import { api } from "./api";
 
 const NAV_ITEMS = [
   { path: "/", label: "Dashboard", icon: "⊞" },
   { path: "/inbox", label: "Inbox", icon: "✉" },
   { path: "/groups", label: "Groups", icon: "👥" },
+  { path: "/auto-join", label: "Auto Join", icon: "🤖" },
   { path: "/accounts", label: "Accounts", icon: "📱" },
 ];
 
@@ -86,6 +88,14 @@ export default function App() {
           element={
             <Layout project={project} onProjectChange={setProject}>
               <Groups />
+            </Layout>
+          }
+        />
+        <Route
+          path="/auto-join"
+          element={
+            <Layout project={project} onProjectChange={setProject}>
+              <AutoJoin />
             </Layout>
           }
         />

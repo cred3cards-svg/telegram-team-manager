@@ -256,3 +256,83 @@ async def run_auto_eval_loop():
         except Exception as e:
             print(f"[auto-join] eval loop error: {e}")
         await asyncio.sleep(EVAL_INTERVAL)
+
+
+# ── API endpoints ─────────────────────────────────────────────────────────────
+
+from fastapi import APIRouter as _APIRouter
+
+router = _APIRouter(prefix="/auto-join")
+
+
+@router.get("/status")
+async def auto_join_status(project_id: int):
+    """Overview: suggested count, joined count, active, left."""
+    with get_conn() as conn:
+        total_suggested = conn.execute("SELECT COUNT(*) as n FROM suggested_groups").fetchone()["n"]
+        joined = conn.execute(
+            "SELECT COUNT(*) as n FROM project_groups WHERE project_id=? AND auto_joined=1 AND left_at IS NULL",
+            (project_id,),
+        ).fetchone()["n"]
+        left = conn.execute(
+            "SELECT COUNT(*) as n FROM project_groups WHERE project_id=? AND auto_joined=1 AND left_at IS NOT NULL",
+            (project_id,),
+        ).fetchone()["n"]
+        pending = conn.execute(
+            """SELECT COUNT(*) as n FROM suggested_groups sg
+               WHERE sg.username != ''
+               AND sg.group_id NOT IN (
+                 SELECT group_id FROM project_groups WHERE project_id=?
+               )""",
+            (project_id,),
+        ).fetchone()["n"]
+    return {
+        "total_suggested": total_suggested,
+        "joined": joined,
+        "left": left,
+        "pending": pending,
+    }
+
+
+@router.get("/joined")
+async def auto_join_list(project_id: int):
+    """List all auto-joined groups for this project."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT pg.id, pg.group_id, pg.group_name, pg.username, pg.category,
+                      pg.human_score, pg.joined_at, pg.left_at, pg.monitored,
+                      a.phone
+               FROM project_groups pg
+               LEFT JOIN accounts a ON a.id = pg.account_id
+               WHERE pg.project_id=? AND pg.auto_joined=1
+               ORDER BY pg.joined_at DESC""",
+            (project_id,),
+        ).fetchall()
+    from database import rows_to_list
+    return rows_to_list(rows)
+
+
+@router.get("/suggested")
+async def auto_join_suggested(project_id: int, limit: int = 50):
+    """Suggested groups not yet joined."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT sg.group_id, sg.username, sg.name, sg.members, sg.category, sg.discovered_at
+               FROM suggested_groups sg
+               WHERE sg.username != ''
+               AND sg.group_id NOT IN (
+                 SELECT group_id FROM project_groups WHERE project_id=?
+               )
+               ORDER BY sg.members DESC LIMIT ?""",
+            (project_id, limit),
+        ).fetchall()
+    from database import rows_to_list
+    return rows_to_list(rows)
+
+
+@router.post("/run-now")
+async def auto_join_run_now(project_id: int):
+    """Trigger an immediate join pass (non-blocking)."""
+    import asyncio
+    asyncio.create_task(_run_joins())
+    return {"status": "triggered"}
