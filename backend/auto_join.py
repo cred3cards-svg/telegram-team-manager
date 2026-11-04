@@ -92,50 +92,68 @@ async def _join_one(client, account_id: int, project_id: int,
 
 async def _run_joins():
     """One join pass across all projects."""
-    with get_conn() as conn:
-        projects = conn.execute("SELECT id FROM projects").fetchall()
+    print("[auto-join] _run_joins started")
+    try:
+        with get_conn() as conn:
+            projects = conn.execute("SELECT id FROM projects").fetchall()
+        print(f"[auto-join] found {len(projects)} projects")
+    except Exception as e:
+        print(f"[auto-join] DB error getting projects: {e}")
+        return
 
     for proj_row in projects:
         project_id = proj_row["id"]
 
-        with get_conn() as conn:
-            accounts = conn.execute(
-                "SELECT id, phone FROM accounts WHERE project_id=? AND status='active'",
-                (project_id,),
-            ).fetchall()
-            if not accounts:
-                continue
-
-            already = {r["group_id"] for r in conn.execute(
-                "SELECT group_id FROM project_groups WHERE project_id=?",
-                (project_id,),
-            ).fetchall()}
-
-            # Candidates not yet joined, with a username, ordered by member count
-            if already:
-                placeholders = ",".join("?" * len(already))
-                candidates = conn.execute(
-                    f"SELECT group_id, username, name, category FROM suggested_groups "
-                    f"WHERE username != '' AND group_id NOT IN ({placeholders}) "
-                    f"ORDER BY members DESC LIMIT 60",
-                    list(already),
+        try:
+            with get_conn() as conn:
+                accounts = conn.execute(
+                    "SELECT id, phone FROM accounts WHERE project_id=? AND status='active'",
+                    (project_id,),
                 ).fetchall()
-            else:
-                candidates = conn.execute(
-                    "SELECT group_id, username, name, category FROM suggested_groups "
-                    "WHERE username != '' ORDER BY members DESC LIMIT 60"
-                ).fetchall()
+                accounts = list(accounts)  # materialize before conn closes
+
+                if not accounts:
+                    print(f"[auto-join] project={project_id}: no active accounts, skipping")
+                    continue
+
+                already = {r["group_id"] for r in conn.execute(
+                    "SELECT group_id FROM project_groups WHERE project_id=?",
+                    (project_id,),
+                ).fetchall()}
+
+                if already:
+                    placeholders = ",".join("?" * len(already))
+                    candidates = conn.execute(
+                        f"SELECT group_id, username, name, category FROM suggested_groups "
+                        f"WHERE username != '' AND group_id NOT IN ({placeholders}) "
+                        f"ORDER BY members DESC LIMIT 60",
+                        list(already),
+                    ).fetchall()
+                else:
+                    candidates = conn.execute(
+                        "SELECT group_id, username, name, category FROM suggested_groups "
+                        "WHERE username != '' ORDER BY members DESC LIMIT 60"
+                    ).fetchall()
+                candidates = list(candidates)  # materialize
+
+            print(f"[auto-join] project={project_id}: {len(accounts)} accounts, {len(already)} already joined, {len(candidates)} candidates")
+        except Exception as e:
+            print(f"[auto-join] project={project_id} DB error: {e}")
+            continue
 
         if not candidates:
+            print(f"[auto-join] project={project_id}: no candidates, skipping")
             continue
 
         for idx, acc in enumerate(accounts):
-            client = _clients.get(acc["phone"])
-            if not client or not client.is_connected():
+            phone = acc["phone"]
+            client = _clients.get(phone)
+            connected = client.is_connected() if client else False
+            print(f"[auto-join] account {phone}: client={client is not None} connected={connected}")
+            if not client or not connected:
                 continue
 
             joined = 0
-            # Round-robin: account i takes every Nth candidate
             for grp in candidates[idx::len(accounts)]:
                 if joined >= MAX_JOINS_PER_ACCOUNT:
                     break
@@ -145,10 +163,9 @@ async def _run_joins():
                 )
                 if ok:
                     joined += 1
-                await asyncio.sleep(8)  # pace between joins
+                await asyncio.sleep(8)
 
-            if joined:
-                print(f"[auto-join] project={project_id} account={acc['phone']}: {joined} new groups joined")
+            print(f"[auto-join] project={project_id} account={phone}: {joined} new groups joined")
 
 
 # ── Eval / leave helpers ──────────────────────────────────────────────────────
