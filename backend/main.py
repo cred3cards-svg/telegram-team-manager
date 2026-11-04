@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-print("[boot] version=2026-11-04-v5 debug-joins")
+print("[boot] version=2026-11-04-v6 sync-run-now")
 
 from database import init_db, prune_messages, _DB_PATH
 from accounts import router as accounts_router, restore_all_sessions, keepalive_all_sessions

@@ -349,7 +349,12 @@ async def auto_join_suggested(project_id: int, limit: int = 50):
 
 @router.post("/run-now")
 async def auto_join_run_now(project_id: int):
-    """Trigger an immediate join pass (non-blocking)."""
-    import asyncio
-    asyncio.create_task(_run_joins())
-    return {"status": "triggered"}
+    """Trigger an immediate join pass (runs to completion, may take a few minutes)."""
+    print("[auto-join] run-now called")
+    try:
+        await _run_joins()
+        print("[auto-join] run-now complete")
+        return {"status": "done"}
+    except Exception as e:
+        print(f"[auto-join] run-now error: {e}")
+        return {"status": "error", "detail": str(e)}
